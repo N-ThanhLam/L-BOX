@@ -12,6 +12,34 @@
 <meta name="apple-mobile-web-app-title" content="L-BOX">
 <link rel="manifest" id="pwaManifest">
 <link rel="apple-touch-icon" id="pwaAppleIcon">
+<script>
+// manifest を DOMContentLoaded より前に Blob で登録
+// ※ Blob URL は Android Chrome の beforeinstallprompt を妨げるため
+//    Data URI 文字列で manifest href を設定する
+(function(){
+  const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="80" fill="#000d0f"/><circle cx="256" cy="256" r="200" fill="none" stroke="#004a48" stroke-width="16"/><circle cx="256" cy="256" r="160" fill="#001a18"/><circle cx="256" cy="256" r="80" fill="#002a28"/><circle cx="256" cy="256" r="20" fill="#00e5cc"/><text x="256" y="148" font-family="Georgia,serif" font-size="72" font-weight="bold" fill="#00e5cc" text-anchor="middle" letter-spacing="4">L</text><text x="256" y="420" font-family="Courier New,monospace" font-size="28" fill="#008a80" text-anchor="middle" letter-spacing="8">BOX</text></svg>`;
+  const svgB64 = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgIcon)));
+  window._pwaIconB64 = svgB64;
+
+  const manifest = {
+    name: 'L-BOX Random Music Player',
+    short_name: 'L-BOX',
+    description: 'クロスフェード付きランダム音楽プレイヤー',
+    start_url: './',
+    display: 'standalone',
+    orientation: 'portrait-primary',
+    background_color: '#000d0f',
+    theme_color: '#00e5cc',
+    icons: [
+      { src: svgB64, sizes: '512x512', type: 'image/svg+xml', purpose: 'any maskable' },
+      { src: svgB64, sizes: '192x192', type: 'image/svg+xml' }
+    ]
+  };
+  const blob = new Blob([JSON.stringify(manifest)], {type:'application/manifest+json'});
+  document.getElementById('pwaManifest').href = URL.createObjectURL(blob);
+  document.getElementById('pwaAppleIcon').href = svgB64;
+})();
+</script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -464,8 +492,21 @@ canvas#viz {
   font-size: 10px;
   color: var(--cream);
   letter-spacing: 1px;
-  width: 130px;
+  width: 110px;
   flex-shrink: 0;
+}
+
+@media (max-width: 400px) {
+  .setting-label { width: 80px; letter-spacing: 0; }
+  .header h1 { font-size: 34px; letter-spacing: 12px; }
+  .controls { grid-template-columns: 1fr 1fr; padding: 14px 16px; }
+  .btn.primary { grid-column: 1 / -1; }
+  .btn.full-btn { grid-column: 1 / -1; }
+  .now-playing, .settings, .status-bar { padding-left: 16px; padding-right: 16px; }
+  .filelist-wrap { padding-left: 16px; padding-right: 16px; }
+  .history-wrap { padding-left: 16px; padding-right: 16px; }
+  .footer { padding-left: 16px; padding-right: 16px; flex-wrap: wrap; gap: 4px; }
+  .kbd-hint { display: none; }
 }
 
 input[type=range] {
@@ -675,10 +716,62 @@ input[type=range]::-moz-range-thumb {
   box-shadow: 0 0 30px var(--neon-glow);
 }
 #pwaInstallBtn.hidden { display: none !important; }
+
+/* ─── iOS インストールバナー ─── */
+#iosInstallBanner {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  background: var(--panel2);
+  border-top: 2px solid var(--amber-dim);
+  padding: 14px 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  z-index: 9999;
+  box-shadow: 0 -4px 24px rgba(0,229,204,0.15);
+}
+#iosInstallIcon { font-size: 24px; flex-shrink: 0; }
+#iosInstallText { flex: 1; }
+#iosInstallTitle {
+  font-size: 11px;
+  color: var(--amber);
+  letter-spacing: 2px;
+  margin-bottom: 3px;
+  text-transform: uppercase;
+}
+#iosInstallSub {
+  font-size: 10px;
+  color: var(--dim);
+  letter-spacing: 0.5px;
+  line-height: 1.5;
+}
+#iosInstallSub strong { color: var(--cream); }
+#iosInstallClose {
+  background: none;
+  border: 1px solid var(--dim2);
+  color: var(--dim);
+  border-radius: 50%;
+  width: 24px; height: 24px;
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+}
 </style>
 </head>
 <body>
 <button id="pwaInstallBtn">📲 ホーム画面に追加</button>
+
+<!-- iOS Safari 用インストール案内バナー -->
+<div id="iosInstallBanner" style="display:none">
+  <span id="iosInstallIcon">📲</span>
+  <div id="iosInstallText">
+    <div id="iosInstallTitle">ホーム画面に追加できます</div>
+    <div id="iosInstallSub">Safari の <strong>共有ボタン</strong> →「ホーム画面に追加」</div>
+  </div>
+  <button id="iosInstallClose" onclick="document.getElementById('iosInstallBanner').style.display='none'">✕</button>
+</div>
 
 <div class="jukebox">
 
@@ -2491,53 +2584,15 @@ onWobbleChange();
 tryRestoreFolder();
 
 // ════════════════════════════════════════════════════════
-//  PWA SETUP — manifest (Blob URL) + Service Worker (inline)
+//  PWA SETUP — Service Worker + Install prompt
 // ════════════════════════════════════════════════════════
 (function initPWA() {
-
-  // ── SVGアイコンをBase64で生成 ──
-  const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-    <rect width="512" height="512" rx="80" fill="#000d0f"/>
-    <circle cx="256" cy="256" r="200" fill="none" stroke="#004a48" stroke-width="16"/>
-    <circle cx="256" cy="256" r="160" fill="#001a18"/>
-    <circle cx="256" cy="256" r="80" fill="#002a28"/>
-    <circle cx="256" cy="256" r="20" fill="#00e5cc"/>
-    <text x="256" y="148" font-family="Georgia,serif" font-size="72" font-weight="bold"
-      fill="#00e5cc" text-anchor="middle" letter-spacing="4"
-      style="filter:drop-shadow(0 0 12px rgba(0,255,238,0.8))">L</text>
-    <text x="256" y="420" font-family="'Courier New',monospace" font-size="28"
-      fill="#008a80" text-anchor="middle" letter-spacing="8">BOX</text>
-  </svg>`;
-  const svgB64 = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgIcon)));
-
-  // ── Apple Touch Icon ──
-  document.getElementById('pwaAppleIcon').href = svgB64;
-
-  // ── manifest.json を Blob URL で生成 ──
-  const manifest = {
-    name: 'L-BOX Random Music Player',
-    short_name: 'L-BOX',
-    description: 'クロスフェード付きランダム音楽プレイヤー',
-    start_url: '.',
-    display: 'standalone',
-    orientation: 'portrait-primary',
-    background_color: '#000d0f',
-    theme_color: '#00e5cc',
-    icons: [
-      { src: svgB64, sizes: '512x512', type: 'image/svg+xml', purpose: 'any maskable' },
-      { src: svgB64, sizes: '192x192', type: 'image/svg+xml' }
-    ]
-  };
-  const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
-  document.getElementById('pwaManifest').href = URL.createObjectURL(manifestBlob);
 
   // ── Service Worker をインラインで生成・登録 ──
   const swCode = `
 const CACHE = 'lbox-v1';
 self.addEventListener('install', e => {
-  e.waitUntil(
-    caches.open(CACHE).then(c => c.addAll(['./']))
-  );
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(['./'])));
   self.skipWaiting();
 });
 self.addEventListener('activate', e => {
@@ -2549,7 +2604,6 @@ self.addEventListener('activate', e => {
   self.clients.claim();
 });
 self.addEventListener('fetch', e => {
-  // 音楽ファイル(blob:)はキャッシュしない
   if (e.request.url.startsWith('blob:')) return;
   e.respondWith(
     caches.match(e.request).then(r => r || fetch(e.request).catch(() => caches.match('./')))
@@ -2561,10 +2615,10 @@ self.addEventListener('fetch', e => {
     const swURL  = URL.createObjectURL(swBlob);
     navigator.serviceWorker.register(swURL, { scope: './' })
       .then(reg => console.log('[PWA] SW registered', reg.scope))
-      .catch(err => console.warn('[PWA] SW registration failed:', err));
+      .catch(err => console.warn('[PWA] SW failed:', err));
   }
 
-  // ── インストールプロンプト ──
+  // ── Android: beforeinstallprompt ──
   let deferredPrompt = null;
   const installBtn = document.getElementById('pwaInstallBtn');
 
@@ -2572,6 +2626,7 @@ self.addEventListener('fetch', e => {
     e.preventDefault();
     deferredPrompt = e;
     installBtn.style.display = 'block';
+    console.log('[PWA] beforeinstallprompt fired');
   });
 
   installBtn.addEventListener('click', async () => {
@@ -2579,21 +2634,27 @@ self.addEventListener('fetch', e => {
     installBtn.style.display = 'none';
     deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
-    console.log('[PWA] Install outcome:', outcome);
+    console.log('[PWA] outcome:', outcome);
     deferredPrompt = null;
   });
 
   window.addEventListener('appinstalled', () => {
     installBtn.style.display = 'none';
+    const iosBanner = document.getElementById('iosInstallBanner');
+    if (iosBanner) iosBanner.style.display = 'none';
     deferredPrompt = null;
-    console.log('[PWA] App installed!');
   });
 
-  // スタンドアロンモード表示（インストール済み）
-  if (window.matchMedia('(display-mode: standalone)').matches ||
-      window.navigator.standalone === true) {
-    console.log('[PWA] Running in standalone mode');
+  // ── iOS Safari: 手動インストール案内バナー ──
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isInStandalone = window.navigator.standalone === true ||
+    window.matchMedia('(display-mode: standalone)').matches;
+
+  if (isIOS && !isInStandalone) {
+    const banner = document.getElementById('iosInstallBanner');
+    if (banner) banner.style.display = 'flex';
   }
+
 })();
 </script>
 </body>
