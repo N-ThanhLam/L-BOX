@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>L-BOX</title>
+<meta name="description" content="L-BOX — Random Music Player with crossfade">
+<meta name="theme-color" content="#00e5cc">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="L-BOX">
+<link rel="manifest" id="pwaManifest">
+<link rel="apple-touch-icon" id="pwaAppleIcon">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -499,6 +507,40 @@ input[type=range]::-moz-range-thumb {
 #sliderWobble::-moz-range-thumb     { background: #ffe0a0; box-shadow: 0 0 10px rgba(255,210,100,0.7); }
 #sliderWobble { background: linear-gradient(to right, var(--amber-lo), rgba(255,210,100,0.25)); }
 
+/* ─── VIZ TOGGLE ─── */
+.viz-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.toggle-switch {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--amber-lo);
+  border-radius: 20px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  width: 14px; height: 14px;
+  left: 3px; top: 3px;
+  background: var(--dim);
+  border-radius: 50%;
+  transition: transform 0.2s, background 0.2s;
+}
+.toggle-switch input:checked + .toggle-slider { background: rgba(0,229,204,0.2); border: 1px solid var(--amber-dim); }
+.toggle-switch input:checked + .toggle-slider::before { transform: translateX(16px); background: var(--amber); box-shadow: 0 0 6px var(--neon-glow); }
+
 .wobble-val-wrap {
   display: flex;
   flex-direction: column;
@@ -607,58 +649,36 @@ input[type=range]::-moz-range-thumb {
 /* hidden input */
 #folderInput { display: none; }
 
-/* ─── MOBILE RESPONSIVE ─── */
-@media (max-width: 520px) {
-  body { padding: 8px; }
-
-  .header { padding: 14px 16px 12px; gap: 10px; }
-  .header h1 { font-size: 28px; letter-spacing: 8px; }
-  .header-sub { font-size: 9px; letter-spacing: 3px; }
-  .vinyl { width: 52px; height: 52px; }
-
-  .now-playing { padding: 12px 16px; }
-  .np-title { font-size: 15px; }
-  .countdown-display { font-size: 22px; min-width: 54px; }
-
-  .phase-label { font-size: 8px; gap: 4px; flex-wrap: wrap; }
-  .phase-pill { font-size: 8px; padding: 1px 5px; }
-
-  .status-bar { padding: 6px 16px; }
-
-  .controls {
-    grid-template-columns: 1fr 1fr;
-    padding: 12px 16px;
-    gap: 8px;
-  }
-  .controls .btn:nth-child(2) { grid-column: 1 / -1; }
-  .btn { padding: 12px 6px; font-size: 10px; letter-spacing: 1px; }
-  .btn.primary { font-size: 12px; }
-  .btn.full-btn { grid-column: 1 / -1; }
-
-  #restoreBanner { padding: 10px 16px; flex-wrap: wrap; gap: 8px; }
-  #restoreBtn { padding: 8px 12px; font-size: 11px; }
-
-  .settings { padding: 12px 16px; }
-  .setting-row { gap: 8px; }
-  .setting-label { width: 86px; font-size: 9px; }
-  .setting-val { font-size: 11px; min-width: 28px; }
-  .wobble-val-wrap { min-width: 48px; }
-
-  .history-wrap { padding: 8px 16px 4px; }
-  .filelist-wrap { padding: 8px 16px 12px; }
-
-  .footer {
-    padding: 8px 16px;
-    font-size: 8px;
-    flex-direction: column;
-    gap: 2px;
-    align-items: flex-start;
-  }
-  .kbd-hint { display: none; }
+/* ─── PWA INSTALL BUTTON ─── */
+#pwaInstallBtn {
+  display: none;
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  padding: 10px 18px;
+  background: var(--amber);
+  color: var(--bg);
+  border: none;
+  border-radius: 8px;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  cursor: pointer;
+  box-shadow: 0 0 20px rgba(0,229,204,0.5);
+  z-index: 9999;
+  transition: all 0.2s;
+  text-transform: uppercase;
 }
+#pwaInstallBtn:hover {
+  background: var(--neon);
+  box-shadow: 0 0 30px var(--neon-glow);
+}
+#pwaInstallBtn.hidden { display: none !important; }
 </style>
 </head>
 <body>
+<button id="pwaInstallBtn">📲 ホーム画面に追加</button>
 
 <div class="jukebox">
 
@@ -756,6 +776,14 @@ input[type=range]::-moz-range-thumb {
         <div class="setting-val wobble-val" id="valWobble">0</div>
         <div class="wobble-mode" id="wobbleMode">— OFF —</div>
       </div>
+    </div>
+    <div class="viz-toggle-row">
+      <div class="setting-label">ビジュアライザー</div>
+      <label class="toggle-switch">
+        <input type="checkbox" id="vizToggle" checked onchange="onVizToggle()">
+        <span class="toggle-slider"></span>
+      </label>
+      <div class="setting-val" id="vizToggleLabel" style="font-size:10px;color:var(--amber-dim);letter-spacing:1px;">ON</div>
     </div>
   </div>
 
@@ -1060,9 +1088,15 @@ window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
 let freqData = null;
+let vizEnabled = true;     // ビジュアライザー ON/OFF フラグ
+let vizRafId  = null;      // requestAnimationFrame の ID
 
-(function vizLoop() {
-  requestAnimationFrame(vizLoop);
+function vizLoop() {
+  if (!vizEnabled) {
+    vizRafId = null;
+    return;                // OFF なら止める
+  }
+  vizRafId = requestAnimationFrame(vizLoop);
   const W = canvas.width, H = canvas.height;
   ctx2d.clearRect(0, 0, W, H);
 
@@ -1106,7 +1140,30 @@ let freqData = null;
       ctx2d.fillRect(i * bw + 1, H - bh, bw - 2, bh);
     }
   }
-})();
+}
+vizRafId = requestAnimationFrame(vizLoop);   // 初回起動
+
+function onVizToggle() {
+  vizEnabled = document.getElementById('vizToggle').checked;
+  const label = document.getElementById('vizToggleLabel');
+  const wrap  = document.querySelector('.viz-wrap');
+
+  if (vizEnabled) {
+    label.textContent = 'ON';
+    label.style.color = 'var(--amber-dim)';
+    wrap.style.display = '';
+    // ループが止まっていたら再起動
+    if (!vizRafId) vizRafId = requestAnimationFrame(vizLoop);
+  } else {
+    label.textContent = 'OFF';
+    label.style.color = 'var(--dim2)';
+    // canvas を黒でクリアしてから非表示
+    ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+    wrap.style.display = 'none';
+    // vizLoop 内で vizRafId = null になり自然に止まる
+  }
+  localStorage.setItem('jukebox_viz', vizEnabled ? '1' : '0');
+}
 
 // ════════════════════════════════════════════════════════
 //  INDEXEDDB — フォルダハンドル永続化
@@ -1540,49 +1597,6 @@ function randIdx(exclude = -1) {
 }
 
 // ════════════════════════════════════════════════════════
-//  MEDIA SESSION API（ロック画面・通知センターの再生制御）
-// ════════════════════════════════════════════════════════
-(function setupMediaSession() {
-  if (!('mediaSession' in navigator)) return;
-
-  navigator.mediaSession.setActionHandler('play', () => {
-    if (!isPlaying && !document.getElementById('btnPlay').disabled) togglePlay();
-  });
-  navigator.mediaSession.setActionHandler('pause', () => {
-    if (isPlaying) stopAll();
-  });
-  navigator.mediaSession.setActionHandler('stop', () => {
-    if (isPlaying) stopAll();
-  });
-  navigator.mediaSession.setActionHandler('nexttrack', () => {
-    if (isPlaying && !document.getElementById('btnSkip').disabled) skipTrack();
-  });
-  // previoustrack は未対応なので null で明示的に無効化
-  try { navigator.mediaSession.setActionHandler('previoustrack', null); } catch(_) {}
-})();
-
-function updateMediaSessionPlaying(title) {
-  if (!('mediaSession' in navigator)) return;
-  navigator.mediaSession.playbackState = 'playing';
-  navigator.mediaSession.metadata = new MediaMetadata({
-    title: title ? stripExt(title) : 'L-BOX',
-    artist: 'Random Jukebox',
-    album: 'L-BOX'
-  });
-}
-
-function updateMediaSessionPaused() {
-  if (!('mediaSession' in navigator)) return;
-  navigator.mediaSession.playbackState = 'paused';
-}
-
-function updateMediaSessionNone() {
-  if (!('mediaSession' in navigator)) return;
-  navigator.mediaSession.playbackState = 'none';
-  navigator.mediaSession.metadata = null;
-}
-
-// ════════════════════════════════════════════════════════
 //  PLAY / STOP
 // ════════════════════════════════════════════════════════
 async function togglePlay() {
@@ -1670,7 +1684,6 @@ function stopAll() {
 
   setUIIdle();
   document.getElementById('vinyl').classList.remove('spinning');
-  updateMediaSessionNone();
 }
 
 // ════════════════════════════════════════════════════════
@@ -2280,8 +2293,6 @@ function setUIPlaying(title, addHistoryFlag = true) {
 
   if (addHistoryFlag) addToHistory(title);
 
-  updateMediaSessionPlaying(title);
-
   if (!isFullPlay) {
     document.getElementById('statusDot').className   = 'status-dot on';
     document.getElementById('statusText').textContent = 'PLAYING';
@@ -2306,9 +2317,6 @@ function setUIFullPlay() {
   document.getElementById('countdown').classList.add('full');
   document.getElementById('progressFill').classList.add('full-mode');
   document.getElementById('nextTitle').textContent = '— フルで再生中 —';
-  // フルモード時もMedia Sessionを更新
-  const currentFile = files[currentIdx];
-  if (currentFile) updateMediaSessionPlaying(currentFile.name);
 }
 
 function setUIIdle() {
@@ -2466,16 +2474,127 @@ document.addEventListener('keyup', e => {
   const savedFade   = localStorage.getItem('jukebox_fade');
   const savedVol    = localStorage.getItem('jukebox_vol');
   const savedWobble = localStorage.getItem('jukebox_wobble');
+  const savedViz    = localStorage.getItem('jukebox_viz');
   if (savedPlay   !== null) document.getElementById('sliderPlay').value   = savedPlay;
   if (savedFade   !== null) document.getElementById('sliderFade').value   = savedFade;
   if (savedVol    !== null) document.getElementById('sliderVol').value    = savedVol;
   if (savedWobble !== null) document.getElementById('sliderWobble').value = savedWobble;
+  if (savedViz === '0') {
+    document.getElementById('vizToggle').checked = false;
+    onVizToggle();
+  }
 })();
 
 onSettingChange();
 onVolumeChange();
 onWobbleChange();
 tryRestoreFolder();
+
+// ════════════════════════════════════════════════════════
+//  PWA SETUP — manifest (Blob URL) + Service Worker (inline)
+// ════════════════════════════════════════════════════════
+(function initPWA() {
+
+  // ── SVGアイコンをBase64で生成 ──
+  const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+    <rect width="512" height="512" rx="80" fill="#000d0f"/>
+    <circle cx="256" cy="256" r="200" fill="none" stroke="#004a48" stroke-width="16"/>
+    <circle cx="256" cy="256" r="160" fill="#001a18"/>
+    <circle cx="256" cy="256" r="80" fill="#002a28"/>
+    <circle cx="256" cy="256" r="20" fill="#00e5cc"/>
+    <text x="256" y="148" font-family="Georgia,serif" font-size="72" font-weight="bold"
+      fill="#00e5cc" text-anchor="middle" letter-spacing="4"
+      style="filter:drop-shadow(0 0 12px rgba(0,255,238,0.8))">L</text>
+    <text x="256" y="420" font-family="'Courier New',monospace" font-size="28"
+      fill="#008a80" text-anchor="middle" letter-spacing="8">BOX</text>
+  </svg>`;
+  const svgB64 = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgIcon)));
+
+  // ── Apple Touch Icon ──
+  document.getElementById('pwaAppleIcon').href = svgB64;
+
+  // ── manifest.json を Blob URL で生成 ──
+  const manifest = {
+    name: 'L-BOX Random Music Player',
+    short_name: 'L-BOX',
+    description: 'クロスフェード付きランダム音楽プレイヤー',
+    start_url: '.',
+    display: 'standalone',
+    orientation: 'portrait-primary',
+    background_color: '#000d0f',
+    theme_color: '#00e5cc',
+    icons: [
+      { src: svgB64, sizes: '512x512', type: 'image/svg+xml', purpose: 'any maskable' },
+      { src: svgB64, sizes: '192x192', type: 'image/svg+xml' }
+    ]
+  };
+  const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+  document.getElementById('pwaManifest').href = URL.createObjectURL(manifestBlob);
+
+  // ── Service Worker をインラインで生成・登録 ──
+  const swCode = `
+const CACHE = 'lbox-v1';
+self.addEventListener('install', e => {
+  e.waitUntil(
+    caches.open(CACHE).then(c => c.addAll(['./']))
+  );
+  self.skipWaiting();
+});
+self.addEventListener('activate', e => {
+  e.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+    )
+  );
+  self.clients.claim();
+});
+self.addEventListener('fetch', e => {
+  // 音楽ファイル(blob:)はキャッシュしない
+  if (e.request.url.startsWith('blob:')) return;
+  e.respondWith(
+    caches.match(e.request).then(r => r || fetch(e.request).catch(() => caches.match('./')))
+  );
+});
+`;
+  if ('serviceWorker' in navigator) {
+    const swBlob = new Blob([swCode], { type: 'application/javascript' });
+    const swURL  = URL.createObjectURL(swBlob);
+    navigator.serviceWorker.register(swURL, { scope: './' })
+      .then(reg => console.log('[PWA] SW registered', reg.scope))
+      .catch(err => console.warn('[PWA] SW registration failed:', err));
+  }
+
+  // ── インストールプロンプト ──
+  let deferredPrompt = null;
+  const installBtn = document.getElementById('pwaInstallBtn');
+
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault();
+    deferredPrompt = e;
+    installBtn.style.display = 'block';
+  });
+
+  installBtn.addEventListener('click', async () => {
+    if (!deferredPrompt) return;
+    installBtn.style.display = 'none';
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    console.log('[PWA] Install outcome:', outcome);
+    deferredPrompt = null;
+  });
+
+  window.addEventListener('appinstalled', () => {
+    installBtn.style.display = 'none';
+    deferredPrompt = null;
+    console.log('[PWA] App installed!');
+  });
+
+  // スタンドアロンモード表示（インストール済み）
+  if (window.matchMedia('(display-mode: standalone)').matches ||
+      window.navigator.standalone === true) {
+    console.log('[PWA] Running in standalone mode');
+  }
+})();
 </script>
 </body>
 </html>
