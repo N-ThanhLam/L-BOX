@@ -752,7 +752,28 @@ let fadeTimer    = null;
 let tickTimer    = null;
 let xfadeTimer   = null;
 
+// ── 操作世代番号 ──
+// playTrack / startCrossfade の呼び出しごとにインクリメントし、
+// 非同期コールバック（loadedmetadata・ended・setInterval）の冒頭で
+// 自分の世代と現在の operationId が一致するか確認する。
+// 不一致なら古い操作のコールバックなので即 return する。
+let operationId  = 0;
+
+// ── フルモード ended リスナー参照 ──
+// toggleFullPlay が audio.addEventListener('ended', onFullEnded) で登録した
+// 関数の参照を保持する。stopAll / playTrack の冒頭で removeEventListener に
+// 渡すことで、連打時にリスナーが Audio 要素に蓄積するのを防ぐ。
+let _onFullEnded = null;
+
 let playHistory  = [];         // 再生履歴 (最大5件)
+
+// ── 次曲プリロード ──
+let preloadTimer        = null;    // 次曲を先行ロードするタイマー
+let preloadedForIdx     = -1;      // プリロード完了済みの nextIdx（-1=未プリロード）
+// schedulePreload が登録した onPreloadMeta の解除関数。startCrossfade が
+// プリロード不使用で再ロードする際に明示的に除去することで、古いリスナーと
+// 新しい onNextMeta が loadedmetadata を二重処理するのを防ぐ。
+let _preloadMetaCleanup = null;
 
 // ── 揺らぎエンジン ──
 let wobbleIntensity = 0;       // 0.0 – 1.0
@@ -767,7 +788,6 @@ let _wow = 0, _wowV = 0;
 let _breathPh = [0, Math.PI * 0.73];
 let _panPh    = [0, Math.PI * 1.37];
 let _filtPh   = 0;
-let _noiseTarget = 0;
 
 // ── 拡張子を除いた表示名 ──
 function stripExt(filename) {
@@ -782,6 +802,47 @@ const audioB = new Audio();
 const audios = [audioA, audioB];
 audioA.preload = audioB.preload = 'none';
 
+// playbackRate 変更時にブラウザのピッチ補正（Preserve Pitch）を無効化する。
+// 補正が有効だと「テープの回転ムラ」効果が打ち消されて平坦な変速になってしまう。
+// 標準プロパティ + ベンダープレフィックス（Firefox旧・Safari旧）を両方設定する。
+function disablePitchPreservation(audio) {
+  audio.preservesPitch       = false;   // 標準（Chrome 86+, Firefox 99+, Safari 16+）
+  audio.mozPreservesPitch    = false;   // Firefox 旧バージョン
+  audio.webkitPreservesPitch = false;   // Safari 旧バージョン
+}
+audios.forEach(disablePitchPreservation);
+
+// 各スロットが現在保持しているオブジェクトURL（メモリリーク防止用）
+const slotObjectURL = [null, null];
+
+/**
+ * 指定スロットの audio.src に ObjectURL をセットし、
+ * 以前のURLを revokeObjectURL で解放する。
+ */
+function setSlotSrc(slot, file) {
+  // 古いURLを解放
+  if (slotObjectURL[slot]) {
+    URL.revokeObjectURL(slotObjectURL[slot]);
+    slotObjectURL[slot] = null;
+  }
+  const url = URL.createObjectURL(file);
+  slotObjectURL[slot] = url;
+  audios[slot].src = url;
+  // src の再セット後にピッチ補正が再有効化されるブラウザがあるため毎回適用する
+  disablePitchPreservation(audios[slot]);
+}
+
+/**
+ * 指定スロットの audio.src をクリアし、ObjectURLも解放する。
+ */
+function clearSlotSrc(slot) {
+  if (slotObjectURL[slot]) {
+    URL.revokeObjectURL(slotObjectURL[slot]);
+    slotObjectURL[slot] = null;
+  }
+  try { audios[slot].src = ''; } catch(_) {}
+}
+
 // ════════════════════════════════════════════════════════
 //  WEB AUDIO API
 // ════════════════════════════════════════════════════════
@@ -792,10 +853,10 @@ let gainB      = null;
 let masterGain = null;
 
 function initAudioContext() {
-  if (actx) {
-    if (actx.state === 'suspended') actx.resume();
-    return;
-  }
+  // 生成のみ行う。resume は resumeAudioContext() に完全に委ねる。
+  // ここで actx.resume() を fire-and-forget すると resumeAudioContext() での
+  // await resume() と二重呼び出し競合が起きるため意図的に行わない。
+  if (actx) return;
   try {
     actx = new (window.AudioContext || window.webkitAudioContext)();
 
@@ -859,6 +920,31 @@ function initAudioContext() {
   }
 }
 
+/**
+ * ユーザージェスチャーの文脈（クリックイベント等）で呼ぶことで、
+ * ブラウザの自動再生ポリシーに準拠しながら AudioContext を確実に起動する。
+ *
+ * ① actx が未生成なら initAudioContext() で生成する
+ * ② 生成済みでも suspended 状態なら resume() を await で待つ
+ *    ─ initAudioContext() は resume を行わないため二重呼び出し競合は発生しない
+ * ③ resume 後も suspended のまま（ポリシー拒否）なら警告をログに残す
+ * ④ 常に Promise<void> を返すので await で安全に待てる
+ */
+async function resumeAudioContext() {
+  initAudioContext();           // 未生成なら生成（resume は行わない）
+  if (!actx) return;
+  if (actx.state !== 'suspended') return;  // 既に running / closed なら不要
+  try {
+    await actx.resume();
+  } catch(e) {
+    console.warn('AudioContext resume failed:', e);
+  }
+  // resume 完了後も suspended のまま = ブラウザポリシーによる拒否（iOS Safari 等）
+  if (actx.state === 'suspended') {
+    console.warn('AudioContext はユーザー操作後も suspended のままです。ブラウザのポリシーを確認してください。');
+  }
+}
+
 function setSlotGain(slot, value) {
   const v = Math.max(0, Math.min(1, value));
   if (actx && gainA) {
@@ -887,8 +973,9 @@ const ctx2d  = canvas.getContext('2d');
 
 function resizeCanvas() {
   const rect = canvas.getBoundingClientRect();
-  canvas.width  = Math.round(rect.width  * window.devicePixelRatio || rect.width);
-  canvas.height = Math.round(rect.height * window.devicePixelRatio || rect.height);
+  const dpr  = window.devicePixelRatio || 1;
+  canvas.width  = Math.round(rect.width  * dpr);
+  canvas.height = Math.round(rect.height * dpr);
 }
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
@@ -1155,12 +1242,12 @@ function highlightFile(idx) {
 // ════════════════════════════════════════════════════════
 //  PLAY SPECIFIC TRACK (曲一覧クリック — クロスフェードで切り替え)
 // ════════════════════════════════════════════════════════
-function playSpecificTrack(idx) {
+async function playSpecificTrack(idx) {
   if (files.length === 0 || idx < 0 || idx >= files.length) return;
 
   // まだ再生していない場合は通常起動
   if (!isPlaying) {
-    initAudioContext();
+    await resumeAudioContext();  // クリック文脈で確実に resume
     isPlaying = true;
     activeSlot = 0;
     document.getElementById('btnPlay').textContent = '⏹ STOP';
@@ -1170,12 +1257,13 @@ function playSpecificTrack(idx) {
 
     isFading   = false;
     isFullPlay = false;
+    operationId++;               // 古い非同期処理を無効化
     clearTimeout(fadeTimer);
     clearInterval(xfadeTimer);
     clearInterval(tickTimer);
     updateFullBtn();
 
-    audios.forEach(a => { a.pause(); try { a.src = ''; } catch(_) {} });
+    audios.forEach((a, i) => { try { a.pause(); } catch (_) {} clearSlotSrc(i); });
     activeSlot = 0;
     setSlotGain(0, 1);
     setSlotGain(1, 0);
@@ -1188,8 +1276,12 @@ function playSpecificTrack(idx) {
   // 再生中 → クロスフェードで指定曲へ切り替え
   if (isFading) return; // クロスフェード中は無視
 
+  operationId++;                 // 読み込み待ち中の onMeta 等を無効化
   isFullPlay = false;
   clearTimeout(fadeTimer);
+  clearTimeout(preloadTimer);    // プリロードタイマーも止める
+  if (_preloadMetaCleanup) { _preloadMetaCleanup(); _preloadMetaCleanup = null; }  // preload リスナーを除去
+  preloadedForIdx = -1;
   clearInterval(xfadeTimer);
   clearInterval(tickTimer);
   updateFullBtn();
@@ -1213,9 +1305,11 @@ function playSpecificTrack(idx) {
 // ════════════════════════════════════════════════════════
 function getWobbleMode(v) {
   if (v === 0)  return '— OFF —';
-  if (v <= 33)  return '▸ DREAM';
+  if (v <= 20)   return '▸ かすか';
+  if (v <= 50)   return '▸ ゆらぎ';
+  if (v <= 80)   return '▸ うねり';
   if (v <= 66)  return '▸ CASSETTE';
-  return '▸ OCEAN';
+  return '▸ おおきく';
 }
 
 function onWobbleChange() {
@@ -1251,48 +1345,59 @@ function startWobbleLoop() {
 
 function wobbleTick() {
   if (!actx || wobbleIntensity === 0) return;
-  const w = wobbleIntensity;
-  const t = actx.currentTime;
+  const w   = wobbleIntensity;   // 0.01 – 1.0
+  const t   = actx.currentTime;
+  const now = Date.now();
 
-  // ── Wow / Flutter (playbackRate) ──
-  // Brownian motion: spring-damped random walk
-  _wowV += (Math.random() - 0.5) * 0.0008 * w;
-  _wowV *= 0.92;
+  // ── Wow / Flutter（ピッチ揺れ）──
+  // w=0.01 でほぼ気づかない、w=1.0 で明らかにわかる。
+  // Brownian motion: ランダムウォーク＋緩やかなダンプ
+  _wowV += (Math.random() - 0.5) * 0.0006 * w;
+  _wowV *= 0.94;
   _wow  += _wowV;
-  _wow  = Math.max(-0.018 * w, Math.min(0.018 * w, _wow));
-  const flutter = (Math.sin(Date.now() * 0.055) * 0.003
-                 + Math.sin(Date.now() * 0.031) * 0.002) * w;
-  const rate = Math.max(0.9, Math.min(1.1, 1 + _wow + flutter));
+  const wowRange = 0.003 + w * 0.030;          // w=1→±3.3%
+  _wow = Math.max(-wowRange, Math.min(wowRange, _wow));
+  // Flutter: テープの高周波揺れ
+  const flutter = (Math.sin(now * 0.11) * 0.0025
+                 + Math.sin(now * 0.067) * 0.0015
+                 + (Math.random() - 0.5) * 0.001) * w;
+  const rate = Math.max(0.92, Math.min(1.08, 1 + _wow + flutter));
   audios.forEach(a => { try { if (!a.paused) a.playbackRate = rate; } catch(_) {} });
 
-  // ── 呼吸感 (Breathing gain) ──
-  _breathPh[0] += 0.009 + Math.random() * 0.003;
-  _breathPh[1] += 0.008 + Math.random() * 0.003;
-  const b0 = 1 - (Math.sin(_breathPh[0]) * 0.5 + 0.5) * 0.28 * w;
-  const b1 = 1 - (Math.sin(_breathPh[1]) * 0.5 + 0.5) * 0.28 * w;
-  if (breathGainA) breathGainA.gain.setTargetAtTime(Math.max(0.6, b0), t, 0.18);
-  if (breathGainB) breathGainB.gain.setTargetAtTime(Math.max(0.6, b1), t, 0.18);
+  // ── 呼吸感（Breathing gain）──
+  // ゆったりした周期でやさしく波打つ。不快にならない下限を自動設定。
+  _breathPh[0] += 0.006 + Math.random() * 0.002;
+  _breathPh[1] += 0.005 + Math.random() * 0.002;
+  const breathDepth = w * 0.30;                // w=1→最大 -30%
+  const b0 = 1 - (Math.sin(_breathPh[0]) * 0.5 + 0.5) * breathDepth;
+  const b1 = 1 - (Math.sin(_breathPh[1]) * 0.5 + 0.5) * breathDepth;
+  const breathFloor = 1 - breathDepth;         // 深くなるほど下限も下がる
+  if (breathGainA) breathGainA.gain.setTargetAtTime(Math.max(breathFloor, b0), t, 0.25);
+  if (breathGainB) breathGainB.gain.setTargetAtTime(Math.max(breathFloor, b1), t, 0.25);
 
-  // ── フィルター揺らぎ ──
-  _filtPh += 0.005 + Math.random() * 0.002;
-  const fBase = 18000 - w * 8000;            // 強いほど暗い
-  const fSwing = Math.sin(_filtPh) * 3000 * w;
-  const fTarget = Math.max(800, fBase + fSwing);
-  if (lofiFilterA) lofiFilterA.frequency.setTargetAtTime(fTarget,       t, 0.45);
-  if (lofiFilterB) lofiFilterB.frequency.setTargetAtTime(fTarget * 0.97, t, 0.45);
+  // ── フィルター揺らぎ（こもり感）──
+  // w=0.01 はほぼ素通し、w=1 でしっかりこもりながらゆらぐ。
+  _filtPh += 0.004 + Math.random() * 0.002;
+  const fBase  = 20000 - w * 14000;           // w=1→6000Hz
+  const fSwing = Math.sin(_filtPh) * 3500 * w;
+  const fTarget = Math.max(1000, fBase + fSwing);
+  if (lofiFilterA) lofiFilterA.frequency.setTargetAtTime(fTarget,        t, 0.4);
+  if (lofiFilterB) lofiFilterB.frequency.setTargetAtTime(fTarget * 0.96, t, 0.4);
 
-  // ── 空間的揺れ (Spatial drift) ──
-  _panPh[0] += 0.006 + Math.random() * 0.002;
-  _panPh[1] += 0.005 + Math.random() * 0.002;
-  const p0 = Math.sin(_panPh[0]) * 0.38 * w;
-  const p1 = Math.sin(_panPh[1]) * 0.38 * w;
+  // ── 空間的揺れ（Stereo pan drift）──
+  // w=0.01 はほぼ中央、w=1 で ±0.55 まで静かに漂う。
+  _panPh[0] += 0.005 + Math.random() * 0.002;
+  _panPh[1] += 0.004 + Math.random() * 0.002;
+  const p0 = Math.sin(_panPh[0]) * w * 0.55;
+  const p1 = Math.sin(_panPh[1]) * w * 0.55;
   if (wobblePannerA) wobblePannerA.pan.setTargetAtTime(p0, t, 0.35);
   if (wobblePannerB) wobblePannerB.pan.setTargetAtTime(p1, t, 0.35);
 
-  // ── ノイズ (テープヒス) ──
-  const nBase = 0.022 * w;
-  const nDrift = (Math.sin(_filtPh * 0.7) * 0.5 + 0.5) * 0.012 * w;
-  if (noiseGainNode) noiseGainNode.gain.setTargetAtTime(nBase + nDrift, t, 0.25);
+  // ── テープヒスノイズ ──
+  // w=0.01 は無音同然、w=1 でうっすら感じる程度。
+  const nBase  = w * 0.028;
+  const nDrift = (Math.sin(_filtPh * 0.6) * 0.5 + 0.5) * 0.012 * w;
+  if (noiseGainNode) noiseGainNode.gain.setTargetAtTime(nBase + nDrift, t, 0.3);
 }
 
 function onSettingChange() {
@@ -1333,26 +1438,30 @@ function renderHistory() {
     li.textContent = stripExt(name);
     ul.appendChild(li);
   });
-  wrap.style.display = playHistory.length > 0 ? '' : 'none';
+  wrap.style.display = playHistory.length > 0 ? 'block' : 'none';
 }
 
 // ════════════════════════════════════════════════════════
 //  RANDOM HELPERS
 // ════════════════════════════════════════════════════════
 function randIdx(exclude = -1) {
-  if (files.length === 1) return 0;
-  let idx, tries = 0;
-  do { idx = Math.floor(Math.random() * files.length); tries++; }
-  while (idx === exclude && tries < 20);
-  return idx;
+  const len = files.length;
+  if (len === 0) return -1;          // ファイルなし（呼び元で防ぐが念のため）
+  if (len === 1) return 0;           // 1曲しかないので exclude を無視して返す
+  if (exclude < 0 || exclude >= len) // exclude が無効値なら単純ランダム
+    return Math.floor(Math.random() * len);
+
+  // exclude を避けて選ぶ：候補配列から直接ランダム選択（ループ試行なし）
+  const idx = Math.floor(Math.random() * (len - 1));
+  return idx < exclude ? idx : idx + 1;
 }
 
 // ════════════════════════════════════════════════════════
 //  PLAY / STOP
 // ════════════════════════════════════════════════════════
-function togglePlay() {
+async function togglePlay() {
   if (isPlaying) { stopAll(); return; }
-  initAudioContext();
+  await resumeAudioContext();   // ジェスチャー文脈で確実に resume してから再生
   isPlaying  = true;
   activeSlot = 0;
   setSlotGain(0, 1);
@@ -1368,15 +1477,61 @@ function stopAll() {
   isPlaying  = false;
   isFading   = false;
   isFullPlay = false;
+  operationId++;                 // 進行中のすべての非同期コールバックを無効化
   clearTimeout(fadeTimer);
+  clearTimeout(preloadTimer);    // プリロードタイマーも止める
+  if (_preloadMetaCleanup) { _preloadMetaCleanup(); _preloadMetaCleanup = null; }  // preload リスナーを除去
+  preloadedForIdx = -1;
   clearInterval(tickTimer);
   clearInterval(xfadeTimer);
 
+  // toggleFullPlay が残した ended リスナーを両スロットから一掃する。
+  // operationId のインクリメントだけではリスナー自体は Audio 要素に残り続けるため
+  // 明示的に removeEventListener する必要がある。
+  if (_onFullEnded) {
+    audios.forEach(a => a.removeEventListener('ended', _onFullEnded));
+    _onFullEnded = null;
+  }
+
+  // Web Audio ゲインを即座に 0 にする。
+  // setSlotGain() の代入は AudioContext 経由のため十分速いが、
+  // masterGain ごと即時消音することでクロスフェード残響や
+  // フォールバック（element.volume）の取りこぼしを確実に防ぐ。
+  if (actx && masterGain) {
+    masterGain.gain.cancelScheduledValues(actx.currentTime);
+    masterGain.gain.setValueAtTime(0, actx.currentTime);
+  }
+  if (actx && gainA) {
+    gainA.gain.cancelScheduledValues(actx.currentTime);
+    gainA.gain.setValueAtTime(0, actx.currentTime);
+  }
+  if (actx && gainB) {
+    gainB.gain.cancelScheduledValues(actx.currentTime);
+    gainB.gain.setValueAtTime(0, actx.currentTime);
+  }
+
+  // pause() の失敗（エラー状態の audio 要素、play/pause 競合など）が
+  // clearSlotSrc の呼び出しをスキップさせないよう try-catch で分離する。
+  // forEach はコールバック内の例外を呼び出し元に伝播させるため、
+  // pause() が slot 0 で投げると slot 1 を含む後続処理が止まる。
   audios.forEach((a, i) => {
-    a.pause();
-    try { a.src = ''; } catch(_) {}
-    setSlotGain(i, i === 0 ? 1 : 0);
+    try { a.pause(); } catch (_) {}
+    a.volume = 0;   // WebAudio 未使用フォールバック用も即時消音
+    clearSlotSrc(i);
+    setSlotGain(i, 0);  // 停止中は両スロット完全消音（次回 togglePlay で再設定）
   });
+
+  // 停止後に masterGain を再生音量へ戻す（次回 PLAY に備える）
+  if (actx && masterGain) {
+    masterGain.gain.setValueAtTime(masterVolume, actx.currentTime);
+  }
+
+  // ピンクノイズを明示的に消音する。
+  // wobbleIntensity > 0 のとき wobbleTick() がノイズゲインを上げ続けているため、
+  // stopAll() だけでは「サー」というヒス音が鳴り続いてしまう盲点を塞ぐ。
+  if (noiseGainNode && actx) {
+    noiseGainNode.gain.setTargetAtTime(0, actx.currentTime, 0.2);
+  }
 
   currentIdx = nextIdx = -1;
 
@@ -1403,18 +1558,31 @@ function toggleFullPlay() {
     updateFullBtn();
     clearInterval(tickTimer);
 
-    const audio = audios[activeSlot];
-    const rem   = isFinite(audio.duration) ? Math.max(0, audio.duration - audio.currentTime) : 0;
+    // フルモード中に登録した ended リスナーをここで確実に除去する。
+    // ノーマル復帰後に onFullEnded が遅延発火するのを防ぐ。
+    if (_onFullEnded) {
+      audios.forEach(a => a.removeEventListener('ended', _onFullEnded));
+      _onFullEnded = null;
+    }
+
+    const audio   = audios[activeSlot];
+    // ① Date.now() を一点で確定する。
+    //    rem の計算・startCountdown・fadeTimer の3箇所が別々に時刻を取ると
+    //    JS 実行時間分のズレが積み重なり、カウントダウン表示が瞬間的に飛ぶ。
+    const snapNow = Date.now();
+    const rem     = isFinite(audio.duration) ? Math.max(0, audio.duration - audio.currentTime) : 0;
+    // ② 終了時刻を一点から確定し、以降はすべてこれを参照する
+    const endTime = snapNow + rem * 1000;
 
     if (rem > fadeDuration + 1) {
       // 残り時間でノーマルカウントダウン & フェードスケジュール
-      const soloRem = rem - fadeDuration;
-      slotEndTime   = Date.now() + rem * 1000;
-      startCountdown(rem);
+      // ③ anchorEndTime を渡して startCountdown 内での Date.now() 再サンプルを抑制
+      startCountdown(rem, endTime);
       clearTimeout(fadeTimer);
+      // ④ fadeTimer の遅延も同じ endTime から逆算することで slotEndTime と完全に一致させる
       fadeTimer = setTimeout(() => {
         if (isPlaying && !isFading) startCrossfade();
-      }, soloRem * 1000);
+      }, Math.max(100, endTime - fadeDuration * 1000 - Date.now()));
     } else {
       // すでにフェード圏内
       startCrossfade();
@@ -1425,22 +1593,35 @@ function toggleFullPlay() {
     // フルモード開始
     isFullPlay = true;
     isFading   = false;
+    operationId++;               // 古い onMeta / fadeTimer 等を無効化
     clearTimeout(fadeTimer);
+    clearTimeout(preloadTimer);  // プリロードタイマーも止める
+    if (_preloadMetaCleanup) { _preloadMetaCleanup(); _preloadMetaCleanup = null; }  // preload リスナーを除去
+    preloadedForIdx = -1;
     clearInterval(xfadeTimer);
     clearInterval(tickTimer);
     updateFullBtn();
 
     const audio = audios[activeSlot];
+    const myOp  = operationId;  // フルモード終了時の世代を記憶
+
+    // 前回フルモードのリスナーが残っていれば先に除去してから登録する。
+    // （連打や短時間の ON→OFF→ON でリスナーが重複蓄積するのを防ぐ）
+    if (_onFullEnded) {
+      audios.forEach(a => a.removeEventListener('ended', _onFullEnded));
+      _onFullEnded = null;
+    }
 
     // 曲が終わったら自動でノーマルへ戻り次の曲へ
     function onFullEnded() {
       audio.removeEventListener('ended', onFullEnded);
-      if (isPlaying && isFullPlay) {
-        isFullPlay = false;
-        updateFullBtn();
-        playTrack(false);
-      }
+      _onFullEnded = null;   // モジュール参照をクリア
+      if (myOp !== operationId || !isPlaying || !isFullPlay) return;
+      isFullPlay = false;
+      updateFullBtn();
+      playTrack(false);
     }
+    _onFullEnded = onFullEnded;   // 後で除去できるよう参照を保存
     audio.addEventListener('ended', onFullEnded);
 
     startFullCountdown();
@@ -1488,6 +1669,17 @@ function playTrack(first = false) {
   clearTimeout(fadeTimer);
   clearInterval(xfadeTimer);
 
+  // この呼び出しの世代番号を確定（以降の非同期処理はこれで自分を識別する）
+  const myOp = ++operationId;
+
+  // toggleFullPlay が登録した ended リスナーが残っていれば除去する。
+  // playTrack は isFullPlay = false をセット済みなので、もし onFullEnded が
+  // 発火しても guard で弾かれるが、リスナー自体を残さないほうが安全。
+  if (_onFullEnded) {
+    audios.forEach(a => a.removeEventListener('ended', _onFullEnded));
+    _onFullEnded = null;
+  }
+
   currentIdx = first ? randIdx() : (nextIdx >= 0 ? nextIdx : randIdx());
   nextIdx    = randIdx(currentIdx);
 
@@ -1499,11 +1691,14 @@ function playTrack(first = false) {
   highlightFile(currentIdx);
   document.getElementById('nextTitle').textContent = files[nextIdx]?.name ? stripExt(files[nextIdx].name) : '—';
 
-  audio.src = URL.createObjectURL(file);
+  setSlotSrc(slot, file);
 
   function onMeta() {
     audio.removeEventListener('loadedmetadata', onMeta);
-    if (!isPlaying) return;
+    audio.removeEventListener('error',          onLoadError);
+    audio.removeEventListener('ended', onEnded);   // 先に両方を解除してから判定
+    // 世代が変わっていたら（スキップ・停止等）この処理は無効
+    if (myOp !== operationId || !isPlaying) return;
 
     const dur   = audio.duration;
     const total = playDuration + fadeDuration;
@@ -1514,6 +1709,7 @@ function playTrack(first = false) {
     }
 
     audio.play().then(() => {
+      if (myOp !== operationId || !isPlaying) return; // play()完了時に再チェック
       document.getElementById('vinyl').classList.add('spinning');
       setUIPlaying(file.name, true);
 
@@ -1522,7 +1718,7 @@ function playTrack(first = false) {
       const fiSteps = Math.max(1, Math.round(fiSec * 20));
       let fi = 0;
       const fiTimer = setInterval(() => {
-        if (!isPlaying) { clearInterval(fiTimer); return; }
+        if (myOp !== operationId || !isPlaying) { clearInterval(fiTimer); return; }
         fi++;
         setSlotGain(slot, Math.min(fi / fiSteps, 1));
         if (fi >= fiSteps) clearInterval(fiTimer);
@@ -1530,29 +1726,115 @@ function playTrack(first = false) {
 
       startCountdown(playDuration + fadeDuration);  // 合計時間でカウント
 
-      // カウントダウンが0になるタイミング（再生時間＋クロスフェード後）にtriggerNextSong
+      // カウントダウンが0になるタイミングにtriggerNextSong
       fadeTimer = setTimeout(() => {
-        if (isPlaying && !isFading && !isFullPlay) triggerNextSong();
+        if (myOp !== operationId || !isPlaying || isFading || isFullPlay) return;
+        triggerNextSong();
       }, (playDuration + fadeDuration) * 1000);
 
+      // ended イベントはここで再登録（世代ガード付き）
+      audio.addEventListener('ended', onEnded);
+
+      // ── 次曲プリロード ──
+      // playDuration の 50% 経過時点で inSlot を先行ロードしておく。
+      // これにより startCrossfade 発火時に loadedmetadata 待ちが不要になり、
+      // fadeDuration が短い / ファイルが大きい / ディスクが低速な環境でも
+      // クロスフェードが途切れずに始まる。
+      clearTimeout(preloadTimer);
+      // 前サイクルで残ったプリロードリスナーをクリアしてから新しいタイマーを設定する
+      if (_preloadMetaCleanup) { _preloadMetaCleanup(); _preloadMetaCleanup = null; }
+      preloadedForIdx = -1;
+      preloadTimer = setTimeout(() => {
+        if (myOp !== operationId || !isPlaying || isFading) return;
+        schedulePreload(nextIdx, myOp, 1 - slot);
+      }, Math.max(0, playDuration * 0.5 * 1000));
+
     }).catch(err => {
+      if (myOp !== operationId || !isPlaying) return;
       console.warn('Play failed:', err);
-      if (isPlaying) setTimeout(() => playTrack(false), 500);
+      setTimeout(() => { if (myOp === operationId && isPlaying) playTrack(false); }, 500);
     });
   }
 
-  audio.addEventListener('loadedmetadata', onMeta);
-
   function onEnded() {
     audio.removeEventListener('ended', onEnded);
-    if (isPlaying && !isFading && !isFullPlay) {
-      clearTimeout(fadeTimer);
-      triggerNextSong();
-    }
+    if (myOp !== operationId || !isPlaying || isFading || isFullPlay) return;
+    clearTimeout(fadeTimer);
+    triggerNextSong();
   }
-  audio.addEventListener('ended', onEnded);
 
+  // ── ロードエラー時の自動スキップ ──
+  // MediaError（デコード失敗・ファイル破損など）で loadedmetadata が
+  // 永遠に来ないケースをカバーする。世代ガード付きで次曲へ自動スキップ。
+  function onLoadError(e) {
+    audio.removeEventListener('loadedmetadata', onMeta);
+    audio.removeEventListener('error',          onLoadError);
+    audio.removeEventListener('ended',          onEnded);
+    if (myOp !== operationId || !isPlaying) return;
+    console.warn('Audio load error, skipping track:', file?.name, e);
+    setTimeout(() => { if (myOp === operationId && isPlaying) playTrack(false); }, 300);
+  }
+
+  audio.addEventListener('loadedmetadata', onMeta);
+  audio.addEventListener('error',          onLoadError);
   audio.load();
+}
+
+// ════════════════════════════════════════════════════════
+//  PRELOAD — 再生中に次曲を先行ロード
+//  playTrack の中盤でタイマー起動し、クロスフェード開始前に
+//  inSlot の src セット・load・シーク位置決定まで済ませておく。
+//  startCrossfade がプリロード済みを検知した場合は loadedmetadata
+//  待ちをスキップして即 play() へ移行することでプツン切れを防ぐ。
+// ════════════════════════════════════════════════════════
+function schedulePreload(targetIdx, myOp, inSlot) {
+  // 前回の schedulePreload が登録した onPreloadMeta が残っていれば先に除去する。
+  // 連続スキップや設定変更で schedulePreload が再呼び出しされた場合に
+  // 古いリスナーが loadedmetadata を誤処理するのを防ぐ。
+  if (_preloadMetaCleanup) { _preloadMetaCleanup(); _preloadMetaCleanup = null; }
+
+  if (isFading || targetIdx < 0 || !files[targetIdx]) return;
+
+  const inAudio = audios[inSlot];
+  const inFile  = files[targetIdx];
+
+  setSlotGain(inSlot, 0);     // 無音で準備
+  setSlotSrc(inSlot, inFile);
+
+  function onPreloadMeta() {
+    inAudio.removeEventListener('loadedmetadata', onPreloadMeta);
+    inAudio.removeEventListener('error',          onPreloadError);
+    _preloadMetaCleanup = null;
+    if (myOp !== operationId || !isPlaying || isFading) return;
+
+    const dur   = inAudio.duration;
+    const total = playDuration + fadeDuration;
+    if (isFinite(dur) && dur > total + 2) {
+      inAudio.currentTime = Math.random() * (dur - total - 1);
+    } else if (isFinite(dur) && dur > 4) {
+      inAudio.currentTime = Math.random() * (dur * 0.4);
+    }
+
+    preloadedForIdx = targetIdx;
+  }
+
+  // プリロード中にファイルが読めなかった場合はリスナーを解除してリセットするだけ。
+  // startCrossfade は preloadedForIdx !== nextIdx を検知して自力でロードし直す。
+  function onPreloadError() {
+    inAudio.removeEventListener('loadedmetadata', onPreloadMeta);
+    inAudio.removeEventListener('error',          onPreloadError);
+    _preloadMetaCleanup = null;
+    preloadedForIdx = -1;
+    console.warn('Preload error, will reload on crossfade:', inFile?.name);
+  }
+
+  _preloadMetaCleanup = () => {
+    inAudio.removeEventListener('loadedmetadata', onPreloadMeta);
+    inAudio.removeEventListener('error',          onPreloadError);
+  };
+  inAudio.addEventListener('loadedmetadata', onPreloadMeta);
+  inAudio.addEventListener('error',          onPreloadError);
+  inAudio.load();
 }
 
 // ════════════════════════════════════════════════════════
@@ -1568,8 +1850,11 @@ function triggerNextSong() {
   const nextFile = files[nextIdx];
   if (nextFile) setUIPlaying(nextFile.name, true);
 
-  // ② 新しいカウントダウンをスタート（クロスフェードはその最初のfadeDuration秒間で実行）
-  startCountdown(playDuration + fadeDuration);
+  // ② slotEndTime を次サイクルの終了時刻に更新する。
+  //    startCountdown() を再呼び出しすると startTime がリセットされ
+  //    プログレスバーが 0 に跳ぶため、ここでは slotEndTime だけ書き換える。
+  //    tickTimer は引き続き走っており、次 tick で新しい slotEndTime を拾う。
+  slotEndTime = Date.now() + (playDuration + fadeDuration) * 1000;
 
   // ③ クロスフェード開始
   startCrossfade();
@@ -1582,44 +1867,51 @@ function startCrossfade() {
   if (!isPlaying || isFading) return;
   isFading = true;
   clearTimeout(fadeTimer);
+  clearTimeout(preloadTimer);  // 進行中のプリロードタイマーを止める
+
+  // この呼び出しの世代番号を確定
+  const myOp = ++operationId;
 
   const outSlot = activeSlot;
   const inSlot  = 1 - activeSlot;
   const inAudio = audios[inSlot];
   const inFile  = files[nextIdx];
 
-  if (!inFile) { finishCrossfade(); return; }
+  if (!inFile) { isFading = false; finishCrossfade(); return; }
 
   setSlotGain(inSlot, 0);
-  inAudio.src = URL.createObjectURL(inFile);
 
   function onNextMeta() {
     inAudio.removeEventListener('loadedmetadata', onNextMeta);
-    if (!isPlaying) return;
+    inAudio.removeEventListener('error',          onNextLoadError);
+    if (myOp !== operationId || !isPlaying) return;
 
-    const dur   = inAudio.duration;
-    const total = playDuration + fadeDuration;
-    if (isFinite(dur) && dur > total + 2) {
-      inAudio.currentTime = Math.random() * (dur - total - 1);
-    } else if (isFinite(dur) && dur > 4) {
-      inAudio.currentTime = Math.random() * (dur * 0.4);
+    // プリロード時にシーク済みでなければここで決定する
+    // （nextIdx が skip 等で変わっていた場合もここで再シークされる）
+    if (preloadedForIdx !== nextIdx) {
+      const dur   = inAudio.duration;
+      const total = playDuration + fadeDuration;
+      if (isFinite(dur) && dur > total + 2) {
+        inAudio.currentTime = Math.random() * (dur - total - 1);
+      } else if (isFinite(dur) && dur > 4) {
+        inAudio.currentTime = Math.random() * (dur * 0.4);
+      }
     }
 
     inAudio.play().then(() => {
-      // 曲名はtriggerNextSong/skip/playSpecificTrackで既に切り替え済み
+      if (myOp !== operationId || !isPlaying) return; // play()完了時に再チェック
       setUIFading();
 
       const totalSteps = fadeDuration * 20;
       let step = 0;
       clearInterval(xfadeTimer);
 
-      // outSlotの現在ゲイン値を起点にフェードアウト（setSlotGain(activeSlot,1)済みなので通常は1）
       const startOutGain = (actx && gainA)
         ? (outSlot === 0 ? gainA.gain.value : gainB.gain.value)
         : 1;
 
       xfadeTimer = setInterval(() => {
-        if (!isPlaying) { clearInterval(xfadeTimer); return; }
+        if (myOp !== operationId || !isPlaying) { clearInterval(xfadeTimer); return; }
         step++;
         const t = Math.min(step / totalSteps, 1);
         setSlotGain(outSlot, startOutGain * (1 - t));
@@ -1627,27 +1919,64 @@ function startCrossfade() {
 
         if (t >= 1) {
           clearInterval(xfadeTimer);
-          finishCrossfade(outSlot, inSlot);
+          if (myOp === operationId) finishCrossfade(outSlot, inSlot);
         }
       }, 50);
 
     }).catch(err => {
+      if (myOp !== operationId || !isPlaying) return;
       console.warn('Next play failed:', err);
-      if (isPlaying) finishCrossfade(outSlot, inSlot);
+      finishCrossfade(outSlot, inSlot);
     });
   }
 
-  inAudio.addEventListener('loadedmetadata', onNextMeta);
-  inAudio.load();
+  // ── クロスフェード先のロードエラー時の回復 ──
+  // 次曲ファイルが破損している等で loadedmetadata が来ない場合に
+  // finishCrossfade でスロット切替だけ済ませ、その後 playTrack が
+  // 新たな曲を選びなおす（finishCrossfade 内の fadeTimer で自然につながる）。
+  function onNextLoadError(e) {
+    inAudio.removeEventListener('loadedmetadata', onNextMeta);
+    inAudio.removeEventListener('error',          onNextLoadError);
+    if (myOp !== operationId || !isPlaying) return;
+    console.warn('Next audio load error, skipping to next:', inFile?.name, e);
+    isFading = false;
+    // nextIdx を更新してから playTrack で仕切り直す
+    nextIdx = randIdx(currentIdx);
+    setTimeout(() => { if (myOp === operationId && isPlaying) playTrack(false); }, 300);
+  }
+
+  // プリロード済み（同じ nextIdx で loadedmetadata 取得・シーク完了）かどうか確認。
+  // readyState >= 1 (HAVE_METADATA) で duration が利用可能な状態を保証する。
+  if (preloadedForIdx === nextIdx && inAudio.readyState >= 1) {
+    // loadedmetadata 待ちをスキップして即 play() へ
+    // プリロードリスナーはすでに自己解除済みのため _preloadMetaCleanup は null のはずだが念のためクリア
+    _preloadMetaCleanup = null;
+    onNextMeta();
+  } else {
+    // 未プリロード / nextIdx が変わっていた場合は改めてロードする。
+    // 古い onPreloadMeta が inAudio に残っている可能性があるため先に明示除去する。
+    // （除去しないと loadedmetadata が onPreloadMeta と onNextMeta の両方に届き
+    //   世代ガードで弾かれるだけだが、不要なリスナー残存を避けて意図を明確にする）
+    if (_preloadMetaCleanup) { _preloadMetaCleanup(); _preloadMetaCleanup = null; }
+    setSlotSrc(inSlot, inFile);
+    inAudio.addEventListener('loadedmetadata', onNextMeta);
+    inAudio.addEventListener('error',          onNextLoadError);
+    inAudio.load();
+  }
 }
 
 function finishCrossfade(outSlot, inSlot) {
   if (!isPlaying) return;
   isFading = false;
 
+  // クロスフェード完了時点でプリロード関連状態を明示リセットする。
+  // 次の playTrack / schedulePreload サイクルが始まる前にクリーンな状態を保証する。
+  if (_preloadMetaCleanup) { _preloadMetaCleanup(); _preloadMetaCleanup = null; }
+  preloadedForIdx = -1;
+
   if (outSlot !== undefined) {
-    audios[outSlot].pause();
-    try { audios[outSlot].src = ''; } catch(_) {}
+    try { audios[outSlot].pause(); } catch (_) {}
+    clearSlotSrc(outSlot);
     setSlotGain(outSlot, 0);
   }
 
@@ -1679,8 +2008,12 @@ function skipTrack() {
   if (!isPlaying) return;
   if (isFading) return; // すでにクロスフェード中は無視
 
+  operationId++;                 // 読み込み待ち中の onMeta 等を無効化
   isFullPlay = false;
   clearTimeout(fadeTimer);
+  clearTimeout(preloadTimer);    // プリロードタイマーも止める
+  if (_preloadMetaCleanup) { _preloadMetaCleanup(); _preloadMetaCleanup = null; }  // preload リスナーを除去
+  preloadedForIdx = -1;
   clearInterval(xfadeTimer);
   clearInterval(tickTimer);
   updateFullBtn();
@@ -1702,14 +2035,25 @@ function skipTrack() {
 // ════════════════════════════════════════════════════════
 //  COUNTDOWN (ノーマルモード) ― 合計時間からカウント
 // ════════════════════════════════════════════════════════
-function startCountdown(totalSec) {
+// anchorEndTime を渡すと slotEndTime をその値で固定し Date.now() を再サンプルしない。
+// toggleFullPlay 解除時など「呼び出し元が既に終了時刻を決定済み」の場合に使う。
+function startCountdown(totalSec, anchorEndTime) {
   clearInterval(tickTimer);
-  slotEndTime = Date.now() + totalSec * 1000;
+  slotEndTime = (anchorEndTime !== undefined) ? anchorEndTime : Date.now() + totalSec * 1000;
+  // カウント開始時点の終了時刻を固定して pct 計算の基準にする。
+  // triggerNextSong が slotEndTime を上書きした後も "今のサイクルの全体幅" を
+  // 保持するため、tick クロージャは startTime を独自に持つ。
+  const startTime = Date.now();
 
   function tick() {
     if (isFullPlay) { clearInterval(tickTimer); return; }
-    const rem = Math.max(0, (slotEndTime - Date.now()) / 1000);
-    const pct = ((totalSec - rem) / totalSec) * 100;
+    const rem     = Math.max(0, (slotEndTime - Date.now()) / 1000);
+    // 経過時間をスロット開始から測り、終了時刻との差分で全体幅を動的に求める。
+    // これにより triggerNextSong が slotEndTime をリセットしても
+    // プログレスバーが瞬間的に跳ぶ（あるいは 0 に戻る）ことを防ぐ。
+    const elapsed  = (Date.now() - startTime) / 1000;
+    const spanSec  = elapsed + rem;                    // 現時点で見える全体幅
+    const pct      = spanSec > 0 ? (elapsed / spanSec) * 100 : 0;
 
     document.getElementById('countdown').textContent = rem.toFixed(1);
     document.getElementById('progressFill').style.width = pct + '%';
@@ -1786,7 +2130,100 @@ function setUIIdle() {
   document.getElementById('pillPlay').classList.remove('active');
   document.getElementById('pillFade').classList.remove('fading-pill');
   document.getElementById('pillFull').classList.remove('full-pill');
+
+  // 停止時に再生履歴をリセットして非表示に戻す
+  playHistory = [];
+  document.getElementById('historyList').innerHTML = '';
+  document.getElementById('historyWrap').style.display = 'none';
 }
+
+// ════════════════════════════════════════════════════════
+//  AUDIO INTERRUPTION AUTO-RESUME
+//  電話などで中断された後、自動的に再開する
+// ════════════════════════════════════════════════════════
+(function setupAutoResume() {
+  // 中断直前に再生中だったかどうかを記憶するフラグ
+  let wasPlayingBeforeInterrupt = false;
+
+  // Web Audio Context のサスペンド/再開で検知する
+  // （電話着信時にブラウザが AudioContext を suspend する）
+  function checkAudioContextState() {
+    if (!actx) return;
+    if (actx.state === 'suspended' && isPlaying) {
+      wasPlayingBeforeInterrupt = true;
+    } else if (actx.state === 'running' && wasPlayingBeforeInterrupt) {
+      wasPlayingBeforeInterrupt = false;
+      // AudioContext は既に running に戻っているので audio 要素を再開するだけ
+      audios.forEach(a => {
+        if (!a.paused && a.src) return; // すでに再生中ならスキップ
+        // src があって一時停止中の場合だけ再開
+        if (a.src && a.paused && isPlaying) {
+          a.play().catch(() => {});
+        }
+      });
+    }
+  }
+
+  // AudioContext の状態変化を監視（100ms ポーリング）
+  setInterval(() => {
+    if (!actx || !isPlaying) return;
+    checkAudioContextState();
+  }, 100);
+
+  // visibilitychange: 画面が非表示→表示に戻ったタイミングでも確認
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (!isPlaying) return;
+
+    // AudioContext が止まっていたら再開
+    if (actx && actx.state === 'suspended') {
+      actx.resume().then(() => {
+        audios.forEach(a => {
+          if (a.src && a.paused) a.play().catch(() => {});
+        });
+      });
+      return;
+    }
+
+    // audio 要素が止まっていたら再開（AudioContext は動いているケース）
+    audios.forEach(a => {
+      if (a.src && a.paused) a.play().catch(() => {});
+    });
+  });
+
+  // pause イベントで中断を検知（電話着信など外部要因による pause）
+  // ユーザーの意図的な STOP とは isPlaying で区別できる
+  function onExternalPause(e) {
+    if (!isPlaying) return; // ユーザーが止めた場合は何もしない
+    wasPlayingBeforeInterrupt = true;
+  }
+
+  function onExternalPlay() {
+    wasPlayingBeforeInterrupt = false;
+  }
+
+  // audios 配列に対してリスナーを設定
+  // (audios は initAudioContext より前に定義されているため直接登録)
+  audios.forEach(a => {
+    a.addEventListener('pause', onExternalPause);
+    a.addEventListener('play',  onExternalPlay);
+  });
+
+  // AudioContext の statechange イベントでも拾う
+  // （actx は initAudioContext 後に存在するのでポーリングで後付け登録）
+  let acStateWatcher = setInterval(() => {
+    if (!actx) return;
+    clearInterval(acStateWatcher);
+    actx.addEventListener('statechange', () => {
+      if (actx.state === 'running' && wasPlayingBeforeInterrupt && isPlaying) {
+        wasPlayingBeforeInterrupt = false;
+        audios.forEach(a => {
+          if (a.src && a.paused) a.play().catch(() => {});
+        });
+      }
+    });
+  }, 200);
+})();
 
 // ════════════════════════════════════════════════════════
 //  KEYBOARD SHORTCUTS
@@ -1796,6 +2233,13 @@ document.addEventListener('keydown', e => {
   switch (e.code) {
     case 'Space':
       e.preventDefault();
+      // keydown の preventDefault() でスクロールを止めつつ、
+      // blur() でフォーカスを body に移してから togglePlay を呼ぶ。
+      // 一部ブラウザは keyup で合成 click を生成するため、
+      // keyup でも Space を preventDefault する（下の keyup ハンドラ参照）。
+      if (document.activeElement && document.activeElement !== document.body) {
+        document.activeElement.blur();
+      }
       if (!document.getElementById('btnPlay').disabled) togglePlay();
       break;
     case 'ArrowRight':
@@ -1805,6 +2249,15 @@ document.addEventListener('keydown', e => {
     case 'KeyF':
       if (!document.getElementById('btnFull').disabled) toggleFullPlay();
       break;
+  }
+});
+
+// Space の keyup でも preventDefault して合成クリックを完全に封じる。
+// blur() 後にフォーカスが body にあれば合成 click は届かないが、
+// blur() が失敗した場合（shadow DOM 内のボタン等）の保険として追加する。
+document.addEventListener('keyup', e => {
+  if (e.code === 'Space' && e.target.tagName !== 'INPUT') {
+    e.preventDefault();
   }
 });
 
