@@ -1305,10 +1305,10 @@ async function playSpecificTrack(idx) {
 // ════════════════════════════════════════════════════════
 function getWobbleMode(v) {
   if (v === 0)  return '— OFF —';
-  if (v <= 20)   return '▸ かすか';
-  if (v <= 50)   return '▸ ゆらぎ';
-  if (v <= 80)   return '▸ うねり';
+  if (v <= 20)  return '▸ かすか';
+  if (v <= 50)  return '▸ ゆらぎ';
   if (v <= 66)  return '▸ CASSETTE';
+  if (v <= 80)  return '▸ うねり';
   return '▸ おおきく';
 }
 
@@ -1850,11 +1850,12 @@ function triggerNextSong() {
   const nextFile = files[nextIdx];
   if (nextFile) setUIPlaying(nextFile.name, true);
 
-  // ② slotEndTime を次サイクルの終了時刻に更新する。
-  //    startCountdown() を再呼び出しすると startTime がリセットされ
-  //    プログレスバーが 0 に跳ぶため、ここでは slotEndTime だけ書き換える。
-  //    tickTimer は引き続き走っており、次 tick で新しい slotEndTime を拾う。
+  // ② 次サイクルのカウントダウンを再スタートする。
+  //    startCountdown() に anchorEndTime を渡すことで、Date.now() の
+  //    再サンプルを抑制しつつ startTime もリセットする。
+  //    これにより elapsed の累積ズレを防ぎ、音が止まるバグを修正する。
   slotEndTime = Date.now() + (playDuration + fadeDuration) * 1000;
+  startCountdown(playDuration + fadeDuration, slotEndTime);
 
   // ③ クロスフェード開始
   startCrossfade();
@@ -1995,9 +1996,14 @@ function finishCrossfade(outSlot, inSlot) {
   document.getElementById('statusText').textContent = 'PLAYING';
 
   // slotEndTime（次のカウント0）まで待ってtriggerNextSong
+  // operationId を世代ガードに使うことで、スキップ・連打時に
+  // 古い finishCrossfade のタイマーが余分に triggerNextSong を
+  // 発火するのを防ぐ。
+  const myFinishOp = operationId;
   clearTimeout(fadeTimer);
   fadeTimer = setTimeout(() => {
-    if (isPlaying && !isFading && !isFullPlay) triggerNextSong();
+    if (myFinishOp !== operationId || !isPlaying || isFading || isFullPlay) return;
+    triggerNextSong();
   }, Math.max(100, slotEndTime - Date.now()));
 }
 
