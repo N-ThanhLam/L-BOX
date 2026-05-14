@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>JUKEBOX</title>
+<title>LAMBOX</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -494,6 +494,27 @@ input[type=range]::-moz-range-thumb {
 #sliderVol::-webkit-slider-thumb { background: var(--green); box-shadow: 0 0 8px var(--green-glow); }
 #sliderVol::-moz-range-thumb     { background: var(--green); box-shadow: 0 0 8px var(--green-glow); }
 
+/* wobble slider thumb = warm amber/cream */
+#sliderWobble::-webkit-slider-thumb { background: #ffe0a0; box-shadow: 0 0 10px rgba(255,210,100,0.7); }
+#sliderWobble::-moz-range-thumb     { background: #ffe0a0; box-shadow: 0 0 10px rgba(255,210,100,0.7); }
+#sliderWobble { background: linear-gradient(to right, var(--amber-lo), rgba(255,210,100,0.25)); }
+
+.wobble-val-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  min-width: 64px;
+}
+.wobble-mode {
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: rgba(255,210,100,0.6);
+  margin-top: 2px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.setting-val.wobble-val { color: #ffe0a0; }
+
 .setting-val {
   font-size: 13px;
   color: var(--amber);
@@ -615,7 +636,7 @@ input[type=range]::-moz-range-thumb {
       <div class="progress-bg">
         <div class="progress-fill" id="progressFill"></div>
       </div>
-      <div class="countdown-display" id="countdown">--.-</div>
+      <div class="countdown-display" id="countdown" style="display:none">--.-</div>
     </div>
 
     <div class="phase-label">
@@ -645,7 +666,6 @@ input[type=range]::-moz-range-thumb {
     <button class="btn primary" id="btnPlay" disabled onclick="togglePlay()">▶ PLAY</button>
     <button class="btn" id="btnSkip" disabled onclick="skipTrack()">⏭ スキップ</button>
     <button class="btn full-btn" id="btnFull" disabled onclick="toggleFullPlay()">♾ フルで聴く</button>
-    <button class="btn restore-btn" id="btnRestore" onclick="restoreFolder()">↩ 前回のフォルダを再読み込み</button>
   </div>
 
   <!-- RESTORE BANNER -->
@@ -678,6 +698,14 @@ input[type=range]::-moz-range-thumb {
       <div class="setting-label">マスターボリューム</div>
       <input type="range" id="sliderVol" min="0" max="100" value="80" oninput="onVolumeChange()">
       <div class="setting-val vol-val" id="valVol">80%</div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">揺らぎ ✦</div>
+      <input type="range" id="sliderWobble" min="0" max="100" value="0" oninput="onWobbleChange()">
+      <div class="wobble-val-wrap">
+        <div class="setting-val wobble-val" id="valWobble">0</div>
+        <div class="wobble-mode" id="wobbleMode">— OFF —</div>
+      </div>
     </div>
   </div>
 
@@ -725,6 +753,21 @@ let tickTimer    = null;
 let xfadeTimer   = null;
 
 let playHistory  = [];         // 再生履歴 (最大5件)
+
+// ── 揺らぎエンジン ──
+let wobbleIntensity = 0;       // 0.0 – 1.0
+let breathGainA = null, breathGainB = null;
+let lofiFilterA = null, lofiFilterB = null;
+let wobblePannerA = null, wobblePannerB = null;
+let noiseSource = null, noiseGainNode = null;
+let wobbleLoopId = null;
+
+// Brownian motion state
+let _wow = 0, _wowV = 0;
+let _breathPh = [0, Math.PI * 0.73];
+let _panPh    = [0, Math.PI * 1.37];
+let _filtPh   = 0;
+let _noiseTarget = 0;
 
 // ── 拡張子を除いた表示名 ──
 function stripExt(filename) {
@@ -774,8 +817,41 @@ function initAudioContext() {
     audioA.volume = 1.0;
     audioB.volume = 1.0;
 
-    srcA.connect(gainA); gainA.connect(analyser);
-    srcB.connect(gainB); gainB.connect(analyser);
+    // ── 揺らぎノード (slot A) ──
+    breathGainA = actx.createGain(); breathGainA.gain.value = 1;
+    lofiFilterA = actx.createBiquadFilter();
+    lofiFilterA.type = 'lowpass'; lofiFilterA.frequency.value = 20000; lofiFilterA.Q.value = 0.5;
+    wobblePannerA = actx.createStereoPanner(); wobblePannerA.pan.value = 0;
+
+    // ── 揺らぎノード (slot B) ──
+    breathGainB = actx.createGain(); breathGainB.gain.value = 1;
+    lofiFilterB = actx.createBiquadFilter();
+    lofiFilterB.type = 'lowpass'; lofiFilterB.frequency.value = 20000; lofiFilterB.Q.value = 0.5;
+    wobblePannerB = actx.createStereoPanner(); wobblePannerB.pan.value = 0;
+
+    // ── ピンクノイズ ──
+    noiseGainNode = actx.createGain(); noiseGainNode.gain.value = 0;
+    try {
+      const nBuf = actx.createBuffer(1, actx.sampleRate * 3, actx.sampleRate);
+      const nd = nBuf.getChannelData(0);
+      let b0=0,b1=0,b2=0,b3=0,b4=0,b5=0,b6=0;
+      for (let i=0;i<nd.length;i++) {
+        const wh = Math.random()*2-1;
+        b0=0.99886*b0+wh*0.0555179; b1=0.99332*b1+wh*0.0750759;
+        b2=0.96900*b2+wh*0.1538520; b3=0.86650*b3+wh*0.3104856;
+        b4=0.55000*b4+wh*0.5329522; b5=-0.7616*b5-wh*0.0168980;
+        nd[i]=(b0+b1+b2+b3+b4+b5+b6+wh*0.5362)*0.11; b6=wh*0.115926;
+      }
+      noiseSource = actx.createBufferSource();
+      noiseSource.buffer = nBuf; noiseSource.loop = true;
+      noiseSource.connect(noiseGainNode);
+      noiseGainNode.connect(masterGain);
+      noiseSource.start();
+    } catch(e) { console.warn('Noise gen failed:', e); }
+
+    // ── グラフ接続 ──
+    srcA.connect(gainA); gainA.connect(breathGainA); breathGainA.connect(lofiFilterA); lofiFilterA.connect(wobblePannerA); wobblePannerA.connect(analyser);
+    srcB.connect(gainB); gainB.connect(breathGainB); breathGainB.connect(lofiFilterB); lofiFilterB.connect(wobblePannerB); wobblePannerB.connect(analyser);
     analyser.connect(masterGain);
     masterGain.connect(actx.destination);
   } catch(e) {
@@ -1008,6 +1084,7 @@ async function tryRestoreFolder() {
 
 function updateRestoreBtn(name) {
   const btn = document.getElementById('btnRestore');
+  if (!btn) return;
   if (name) {
     const short = name.length > 16 ? name.slice(0, 16) + '…' : name;
     btn.textContent = `↩ 前回:「${short}」を再読み込み`;
@@ -1130,6 +1207,93 @@ function playSpecificTrack(idx) {
   startCrossfade();
 }
 
+
+// ════════════════════════════════════════════════════════
+//  揺らぎエンジン
+// ════════════════════════════════════════════════════════
+function getWobbleMode(v) {
+  if (v === 0)  return '— OFF —';
+  if (v <= 33)  return '▸ DREAM';
+  if (v <= 66)  return '▸ CASSETTE';
+  return '▸ OCEAN';
+}
+
+function onWobbleChange() {
+  const raw = +document.getElementById('sliderWobble').value;
+  wobbleIntensity = raw / 100;
+  document.getElementById('valWobble').textContent = raw;
+  document.getElementById('wobbleMode').textContent = getWobbleMode(raw);
+  localStorage.setItem('jukebox_wobble', raw);
+
+  if (wobbleIntensity === 0) resetWobbleNodes();
+  if (wobbleIntensity > 0 && !wobbleLoopId) startWobbleLoop();
+  if (wobbleIntensity === 0 && wobbleLoopId) {
+    clearInterval(wobbleLoopId); wobbleLoopId = null;
+  }
+}
+
+function resetWobbleNodes() {
+  audios.forEach(a => { try { a.playbackRate = 1; } catch(_) {} });
+  const t = actx ? actx.currentTime : 0;
+  if (breathGainA)  breathGainA.gain.setTargetAtTime(1, t, 0.3);
+  if (breathGainB)  breathGainB.gain.setTargetAtTime(1, t, 0.3);
+  if (lofiFilterA)  lofiFilterA.frequency.setTargetAtTime(20000, t, 0.5);
+  if (lofiFilterB)  lofiFilterB.frequency.setTargetAtTime(20000, t, 0.5);
+  if (wobblePannerA) wobblePannerA.pan.setTargetAtTime(0, t, 0.3);
+  if (wobblePannerB) wobblePannerB.pan.setTargetAtTime(0, t, 0.3);
+  if (noiseGainNode) noiseGainNode.gain.setTargetAtTime(0, t, 0.3);
+}
+
+function startWobbleLoop() {
+  if (wobbleLoopId) return;
+  wobbleLoopId = setInterval(wobbleTick, 65);
+}
+
+function wobbleTick() {
+  if (!actx || wobbleIntensity === 0) return;
+  const w = wobbleIntensity;
+  const t = actx.currentTime;
+
+  // ── Wow / Flutter (playbackRate) ──
+  // Brownian motion: spring-damped random walk
+  _wowV += (Math.random() - 0.5) * 0.0008 * w;
+  _wowV *= 0.92;
+  _wow  += _wowV;
+  _wow  = Math.max(-0.018 * w, Math.min(0.018 * w, _wow));
+  const flutter = (Math.sin(Date.now() * 0.055) * 0.003
+                 + Math.sin(Date.now() * 0.031) * 0.002) * w;
+  const rate = Math.max(0.9, Math.min(1.1, 1 + _wow + flutter));
+  audios.forEach(a => { try { if (!a.paused) a.playbackRate = rate; } catch(_) {} });
+
+  // ── 呼吸感 (Breathing gain) ──
+  _breathPh[0] += 0.009 + Math.random() * 0.003;
+  _breathPh[1] += 0.008 + Math.random() * 0.003;
+  const b0 = 1 - (Math.sin(_breathPh[0]) * 0.5 + 0.5) * 0.28 * w;
+  const b1 = 1 - (Math.sin(_breathPh[1]) * 0.5 + 0.5) * 0.28 * w;
+  if (breathGainA) breathGainA.gain.setTargetAtTime(Math.max(0.6, b0), t, 0.18);
+  if (breathGainB) breathGainB.gain.setTargetAtTime(Math.max(0.6, b1), t, 0.18);
+
+  // ── フィルター揺らぎ ──
+  _filtPh += 0.005 + Math.random() * 0.002;
+  const fBase = 18000 - w * 8000;            // 強いほど暗い
+  const fSwing = Math.sin(_filtPh) * 3000 * w;
+  const fTarget = Math.max(800, fBase + fSwing);
+  if (lofiFilterA) lofiFilterA.frequency.setTargetAtTime(fTarget,       t, 0.45);
+  if (lofiFilterB) lofiFilterB.frequency.setTargetAtTime(fTarget * 0.97, t, 0.45);
+
+  // ── 空間的揺れ (Spatial drift) ──
+  _panPh[0] += 0.006 + Math.random() * 0.002;
+  _panPh[1] += 0.005 + Math.random() * 0.002;
+  const p0 = Math.sin(_panPh[0]) * 0.38 * w;
+  const p1 = Math.sin(_panPh[1]) * 0.38 * w;
+  if (wobblePannerA) wobblePannerA.pan.setTargetAtTime(p0, t, 0.35);
+  if (wobblePannerB) wobblePannerB.pan.setTargetAtTime(p1, t, 0.35);
+
+  // ── ノイズ (テープヒス) ──
+  const nBase = 0.022 * w;
+  const nDrift = (Math.sin(_filtPh * 0.7) * 0.5 + 0.5) * 0.012 * w;
+  if (noiseGainNode) noiseGainNode.gain.setTargetAtTime(nBase + nDrift, t, 0.25);
+}
 
 function onSettingChange() {
   playDuration = +document.getElementById('sliderPlay').value;
@@ -1649,16 +1813,19 @@ document.addEventListener('keydown', e => {
 // ════════════════════════════════════════════════════════
 // LocalStorageから前回の設定を復元してスライダーに反映
 (function loadSavedSettings() {
-  const savedPlay = localStorage.getItem('jukebox_play');
-  const savedFade = localStorage.getItem('jukebox_fade');
-  const savedVol  = localStorage.getItem('jukebox_vol');
-  if (savedPlay !== null) document.getElementById('sliderPlay').value = savedPlay;
-  if (savedFade !== null) document.getElementById('sliderFade').value = savedFade;
-  if (savedVol  !== null) document.getElementById('sliderVol').value  = savedVol;
+  const savedPlay   = localStorage.getItem('jukebox_play');
+  const savedFade   = localStorage.getItem('jukebox_fade');
+  const savedVol    = localStorage.getItem('jukebox_vol');
+  const savedWobble = localStorage.getItem('jukebox_wobble');
+  if (savedPlay   !== null) document.getElementById('sliderPlay').value   = savedPlay;
+  if (savedFade   !== null) document.getElementById('sliderFade').value   = savedFade;
+  if (savedVol    !== null) document.getElementById('sliderVol').value    = savedVol;
+  if (savedWobble !== null) document.getElementById('sliderWobble').value = savedWobble;
 })();
 
 onSettingChange();
 onVolumeChange();
+onWobbleChange();
 tryRestoreFolder();
 </script>
 </body>
