@@ -1274,29 +1274,38 @@ async function playSpecificTrack(idx) {
   }
 
   // 再生中 → クロスフェードで指定曲へ切り替え
-  if (isFading) return; // クロスフェード中は無視
+  // skipTrack と同様に、クロスフェード中でも受け付けて即座にリセットする。
 
-  operationId++;                 // 読み込み待ち中の onMeta 等を無効化
+  operationId++;                 // 進行中のすべての非同期コールバックを無効化
   isFullPlay = false;
+  isFading   = false;            // クロスフェード中フラグを強制解除
   clearTimeout(fadeTimer);
-  clearTimeout(preloadTimer);    // プリロードタイマーも止める
-  if (_preloadMetaCleanup) { _preloadMetaCleanup(); _preloadMetaCleanup = null; }  // preload リスナーを除去
+  clearTimeout(preloadTimer);
+  if (_preloadMetaCleanup) { _preloadMetaCleanup(); _preloadMetaCleanup = null; }
   preloadedForIdx = -1;
   clearInterval(xfadeTimer);
   clearInterval(tickTimer);
   updateFullBtn();
 
-  // アクティブスロットのゲインを確実に1にリセット（フェードイン途中でも対応）
+  // クロスフェード途中の場合、inSlot の audio が再生中の可能性があるので止める。
+  const inSlotPst = 1 - activeSlot;
+  try { audios[inSlotPst].pause(); } catch (_) {}
+  clearSlotSrc(inSlotPst);
+  setSlotGain(inSlotPst, 0);
+
+  // activeSlot のゲインを確実に1にリセット
   setSlotGain(activeSlot, 1);
 
+  // クロスフェード途中なら nextIdx を currentIdx に昇格させてから指定曲を nextIdx にセット
+  if (nextIdx >= 0) currentIdx = nextIdx;
   nextIdx = idx;
+
   const nextFile = files[nextIdx];
   if (nextFile) setUIPlaying(nextFile.name, true);
 
-  // クロスフェード(fadeDuration)＋ソロ再生(playDuration)の合計でタイマー設定
   slotEndTime = Date.now() + (fadeDuration + playDuration) * 1000;
-  startCountdown(fadeDuration + playDuration);
-  startCrossfade();
+  startCountdown(fadeDuration + playDuration, slotEndTime);
+  startCrossfade(true);  // operationId はインクリメント済み
 }
 
 
@@ -1864,14 +1873,16 @@ function triggerNextSong() {
 // ════════════════════════════════════════════════════════
 //  CROSSFADE
 // ════════════════════════════════════════════════════════
-function startCrossfade() {
+function startCrossfade(alreadyBumped = false) {
   if (!isPlaying || isFading) return;
   isFading = true;
   clearTimeout(fadeTimer);
   clearTimeout(preloadTimer);  // 進行中のプリロードタイマーを止める
 
   // この呼び出しの世代番号を確定
-  const myOp = ++operationId;
+  // skipTrack 等が呼び出し前に operationId をインクリメント済みの場合は
+  // 二重インクリメントを避けるため現在値をそのまま使う。
+  const myOp = alreadyBumped ? operationId : ++operationId;
 
   const outSlot = activeSlot;
   const inSlot  = 1 - activeSlot;
@@ -2012,30 +2023,44 @@ function finishCrossfade(outSlot, inSlot) {
 // ════════════════════════════════════════════════════════
 function skipTrack() {
   if (!isPlaying) return;
-  if (isFading) return; // すでにクロスフェード中は無視
 
-  operationId++;                 // 読み込み待ち中の onMeta 等を無効化
+  // クロスフェード中でも受け付ける。
+  // 進行中の xfadeTimer・loadedmetadata 待ちをすべて無効化してから
+  // スロット状態を手動でリセットし、新しいクロスフェードを開始する。
+
+  operationId++;                 // 進行中のすべての非同期コールバックを無効化
   isFullPlay = false;
+  isFading   = false;            // クロスフェード中フラグを強制解除
   clearTimeout(fadeTimer);
-  clearTimeout(preloadTimer);    // プリロードタイマーも止める
-  if (_preloadMetaCleanup) { _preloadMetaCleanup(); _preloadMetaCleanup = null; }  // preload リスナーを除去
+  clearTimeout(preloadTimer);
+  if (_preloadMetaCleanup) { _preloadMetaCleanup(); _preloadMetaCleanup = null; }
   preloadedForIdx = -1;
   clearInterval(xfadeTimer);
   clearInterval(tickTimer);
   updateFullBtn();
 
-  // アクティブスロットのゲインを確実に1にリセット（フェードイン途中でも対応）
+  // クロスフェード途中でスキップした場合、inSlot の audio が再生中の可能性がある。
+  // 両スロットを一旦止めてアクティブスロットだけ続行する形に整える。
+  const inSlot = 1 - activeSlot;
+  try { audios[inSlot].pause(); } catch (_) {}
+  clearSlotSrc(inSlot);
+  setSlotGain(inSlot, 0);
+
+  // activeSlot のゲインを確実に1にリセット（フェードイン途中でも対応）
   setSlotGain(activeSlot, 1);
 
-  // 次曲をランダムに決定
+  // クロスフェード途中でスキップした場合は currentIdx が未確定のまま残ることがある。
+  // nextIdx（表示上「次の曲」として確定していた曲）を currentIdx に昇格させてから
+  // 新たな nextIdx を選ぶことで、表示と再生の対応がずれるのを防ぐ。
+  if (nextIdx >= 0) currentIdx = nextIdx;
   nextIdx = randIdx(currentIdx);
+
   const nextFile = files[nextIdx];
   if (nextFile) setUIPlaying(nextFile.name, true);
 
-  // クロスフェード(fadeDuration)＋ソロ再生(playDuration)の合計でタイマー設定
   slotEndTime = Date.now() + (fadeDuration + playDuration) * 1000;
-  startCountdown(fadeDuration + playDuration);
-  startCrossfade();
+  startCountdown(fadeDuration + playDuration, slotEndTime);
+  startCrossfade(true);  // operationId は skipTrack 内でインクリメント済み
 }
 
 // ════════════════════════════════════════════════════════
