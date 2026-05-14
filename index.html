@@ -636,7 +636,7 @@ input[type=range]::-moz-range-thumb {
       <div class="progress-bg">
         <div class="progress-fill" id="progressFill"></div>
       </div>
-      <div class="countdown-display" id="countdown" style="display:none">--.-</div>
+      <div class="countdown-display" id="countdown">--.-</div>
     </div>
 
     <div class="phase-label">
@@ -943,6 +943,35 @@ async function resumeAudioContext() {
   if (actx.state === 'suspended') {
     console.warn('AudioContext はユーザー操作後も suspended のままです。ブラウザのポリシーを確認してください。');
   }
+}
+
+/**
+ * クロスフェード割り込み時に「今どちらが主役か」をゲインで判定し
+ * activeSlot を確定する。小さい方のスロットは pause + clearSlotSrc する。
+ * ゲイン値はそのまま保持して startCrossfade の xfadeTimer に引き継ぐ。
+ */
+function resolveActiveSlot() {
+  const inSlot  = 1 - activeSlot;
+  const getGain = s => (actx && (s === 0 ? gainA : gainB))
+    ? (s === 0 ? gainA.gain.value : gainB.gain.value)
+    : audios[s].volume;
+
+  const inGain  = getGain(inSlot);
+  const outGain = getGain(activeSlot);
+
+  if (inGain > outGain) {
+    // フェードインが進んでいる → inSlot を activeSlot に昇格
+    try { audios[activeSlot].pause(); } catch (_) {}
+    clearSlotSrc(activeSlot);
+    setSlotGain(activeSlot, 0);
+    activeSlot = inSlot;
+  } else {
+    // outSlot がまだ主役 → inSlot だけ止める
+    try { audios[inSlot].pause(); } catch (_) {}
+    clearSlotSrc(inSlot);
+    setSlotGain(inSlot, 0);
+  }
+  // activeSlot のゲインはそのまま保持（急激な音量変化を避ける）
 }
 
 function setSlotGain(slot, value) {
@@ -1282,22 +1311,17 @@ async function playSpecificTrack(idx) {
   clearTimeout(fadeTimer);
   clearTimeout(preloadTimer);
   if (_preloadMetaCleanup) { _preloadMetaCleanup(); _preloadMetaCleanup = null; }
+  if (_onFullEnded) { audios.forEach(a => a.removeEventListener('ended', _onFullEnded)); _onFullEnded = null; }
   preloadedForIdx = -1;
   clearInterval(xfadeTimer);
   clearInterval(tickTimer);
   updateFullBtn();
 
-  // クロスフェード途中の場合、inSlot の audio が再生中の可能性があるので止める。
-  const inSlotPst = 1 - activeSlot;
-  try { audios[inSlotPst].pause(); } catch (_) {}
-  clearSlotSrc(inSlotPst);
-  setSlotGain(inSlotPst, 0);
-
-  // activeSlot のゲインを確実に1にリセット
-  setSlotGain(activeSlot, 1);
-
-  // クロスフェード途中なら nextIdx を currentIdx に昇格させてから指定曲を nextIdx にセット
+  // クロスフェード途中の場合、ゲインが大きい方を activeSlot に昇格させ小さい方を止める。
+  // ゲインはいじらず現在値のまま startCrossfade に引き継ぐ（急激な音量変化を防ぐ）。
+  resolveActiveSlot();
   if (nextIdx >= 0) currentIdx = nextIdx;
+
   nextIdx = idx;
 
   const nextFile = files[nextIdx];
@@ -1353,7 +1377,7 @@ function startWobbleLoop() {
 }
 
 function wobbleTick() {
-  if (!actx || wobbleIntensity === 0) return;
+  if (!actx || wobbleIntensity === 0 || !isPlaying) return;
   const w   = wobbleIntensity;   // 0.01 – 1.0
   const t   = actx.currentTime;
   const now = Date.now();
@@ -1568,54 +1592,71 @@ function toggleFullPlay() {
     clearInterval(tickTimer);
 
     // フルモード中に登録した ended リスナーをここで確実に除去する。
-    // ノーマル復帰後に onFullEnded が遅延発火するのを防ぐ。
     if (_onFullEnded) {
       audios.forEach(a => a.removeEventListener('ended', _onFullEnded));
       _onFullEnded = null;
     }
 
+    // operationId をインクリメントして古い fadeTimer 等を無効化する。
+    // フルモード解除後にスキップ等が割り込んでも古いタイマーが
+    // startCrossfade を余分に発火しないようにする。
+    const myOp  = ++operationId;
+
     const audio   = audios[activeSlot];
-    // ① Date.now() を一点で確定する。
-    //    rem の計算・startCountdown・fadeTimer の3箇所が別々に時刻を取ると
-    //    JS 実行時間分のズレが積み重なり、カウントダウン表示が瞬間的に飛ぶ。
     const snapNow = Date.now();
     const rem     = isFinite(audio.duration) ? Math.max(0, audio.duration - audio.currentTime) : 0;
-    // ② 終了時刻を一点から確定し、以降はすべてこれを参照する
     const endTime = snapNow + rem * 1000;
 
+    // slotEndTime を更新しておく。finishCrossfade の fadeTimer が
+    // slotEndTime - Date.now() を参照するためここで合わせる。
+    slotEndTime = endTime;
+
     if (rem > fadeDuration + 1) {
-      // 残り時間でノーマルカウントダウン & フェードスケジュール
-      // ③ anchorEndTime を渡して startCountdown 内での Date.now() 再サンプルを抑制
       startCountdown(rem, endTime);
       clearTimeout(fadeTimer);
-      // ④ fadeTimer の遅延も同じ endTime から逆算することで slotEndTime と完全に一致させる
       fadeTimer = setTimeout(() => {
-        if (isPlaying && !isFading) startCrossfade();
+        if (myOp !== operationId || !isPlaying || isFading || isFullPlay) return;
+        startCrossfade(true);  // operationId はインクリメント済み
       }, Math.max(100, endTime - fadeDuration * 1000 - Date.now()));
     } else {
       // すでにフェード圏内
-      startCrossfade();
+      startCrossfade(true);
     }
 
-    setUIPlaying(files[currentIdx]?.name ?? '', false); // タイトル再セット (履歴追加なし)
+    setUIPlaying(files[currentIdx]?.name ?? '', false);
+    // NEXTタイトルを復元
+    document.getElementById('nextTitle').textContent = files[nextIdx]?.name ? stripExt(files[nextIdx].name) : '—';
   } else {
     // フルモード開始
     isFullPlay = true;
     isFading   = false;
     operationId++;               // 古い onMeta / fadeTimer 等を無効化
     clearTimeout(fadeTimer);
-    clearTimeout(preloadTimer);  // プリロードタイマーも止める
-    if (_preloadMetaCleanup) { _preloadMetaCleanup(); _preloadMetaCleanup = null; }  // preload リスナーを除去
+    clearTimeout(preloadTimer);
+    if (_preloadMetaCleanup) { _preloadMetaCleanup(); _preloadMetaCleanup = null; }
     preloadedForIdx = -1;
     clearInterval(xfadeTimer);
     clearInterval(tickTimer);
     updateFullBtn();
 
+    // クロスフェード中（isFading だった）にフルを押した場合、
+    // ゲインが大きい方を activeSlot に確定して不要なスロットを止める。
+    const preSlot = activeSlot;
+    resolveActiveSlot();
+    // resolveActiveSlot が inSlot を昇格させた場合、currentIdx は旧スロットのまま。
+    // onFullEnded → playTrack(false) が再生済み曲を currentIdx として使い
+    // 同じ曲を再ロードするバグを防ぐため、currentIdx と nextIdx を正しく更新する。
+    if (activeSlot !== preSlot) {
+      currentIdx = nextIdx;
+      nextIdx    = randIdx(currentIdx);
+    }
+    // フルモードは activeSlot を最終音量 1 で再生するため確実に戻す。
+    setSlotGain(activeSlot, 1);
+
     const audio = audios[activeSlot];
-    const myOp  = operationId;  // フルモード終了時の世代を記憶
+    const myOp  = operationId;
 
     // 前回フルモードのリスナーが残っていれば先に除去してから登録する。
-    // （連打や短時間の ON→OFF→ON でリスナーが重複蓄積するのを防ぐ）
     if (_onFullEnded) {
       audios.forEach(a => a.removeEventListener('ended', _onFullEnded));
       _onFullEnded = null;
@@ -1624,16 +1665,23 @@ function toggleFullPlay() {
     // 曲が終わったら自動でノーマルへ戻り次の曲へ
     function onFullEnded() {
       audio.removeEventListener('ended', onFullEnded);
-      _onFullEnded = null;   // モジュール参照をクリア
+      _onFullEnded = null;
       if (myOp !== operationId || !isPlaying || !isFullPlay) return;
       isFullPlay = false;
       updateFullBtn();
       playTrack(false);
     }
-    _onFullEnded = onFullEnded;   // 後で除去できるよう参照を保存
+    _onFullEnded = onFullEnded;
     audio.addEventListener('ended', onFullEnded);
 
     startFullCountdown();
+    // 現在曲名を確実に表示（クロスフェード途中でフルを押した場合にも対応）
+    const currentFile = files[currentIdx];
+    if (currentFile) {
+      const el = document.getElementById('npTitle');
+      el.textContent = stripExt(currentFile.name);
+      el.classList.remove('idle');
+    }
     setUIFullPlay();
   }
 }
@@ -1859,15 +1907,14 @@ function triggerNextSong() {
   const nextFile = files[nextIdx];
   if (nextFile) setUIPlaying(nextFile.name, true);
 
-  // ② 次サイクルのカウントダウンを再スタートする。
-  //    startCountdown() に anchorEndTime を渡すことで、Date.now() の
-  //    再サンプルを抑制しつつ startTime もリセットする。
-  //    これにより elapsed の累積ズレを防ぎ、音が止まるバグを修正する。
+  // ② operationId をここでインクリメントし startCrossfade に伝える。
+  //    startCrossfade 内で二重インクリメントされるのを防ぐ。
+  operationId++;
   slotEndTime = Date.now() + (playDuration + fadeDuration) * 1000;
   startCountdown(playDuration + fadeDuration, slotEndTime);
 
-  // ③ クロスフェード開始
-  startCrossfade();
+  // ③ クロスフェード開始（operationId はインクリメント済み）
+  startCrossfade(true);
 }
 
 // ════════════════════════════════════════════════════════
@@ -1889,14 +1936,23 @@ function startCrossfade(alreadyBumped = false) {
   const inAudio = audios[inSlot];
   const inFile  = files[nextIdx];
 
-  if (!inFile) { isFading = false; finishCrossfade(); return; }
+  if (!inFile) {
+    // ファイルが見つからない場合もスロット情報を渡して
+    // activeSlot と currentIdx が正しく更新されるようにする。
+    isFading = false;
+    finishCrossfade(outSlot, inSlot);
+    return;
+  }
 
   setSlotGain(inSlot, 0);
 
   function onNextMeta() {
     inAudio.removeEventListener('loadedmetadata', onNextMeta);
     inAudio.removeEventListener('error',          onNextLoadError);
-    if (myOp !== operationId || !isPlaying) return;
+    // バグ②: isFullPlay もガードする。
+    // ロード待ち中にユーザーがフルモードをONにした場合、
+    // クロスフェードをここで止めて何もしない。
+    if (myOp !== operationId || !isPlaying || isFullPlay) return;
 
     // プリロード時にシーク済みでなければここで決定する
     // （nextIdx が skip 等で変わっていた場合もここで再シークされる）
@@ -1911,7 +1967,7 @@ function startCrossfade(alreadyBumped = false) {
     }
 
     inAudio.play().then(() => {
-      if (myOp !== operationId || !isPlaying) return; // play()完了時に再チェック
+      if (myOp !== operationId || !isPlaying || isFullPlay) return; // play()完了時に再チェック
       setUIFading();
 
       const totalSteps = fadeDuration * 20;
@@ -1936,9 +1992,15 @@ function startCrossfade(alreadyBumped = false) {
       }, 50);
 
     }).catch(err => {
+      // バグ③: play() 失敗時に finishCrossfade でスロットを切り替えると
+      // inAudio が無音のまま activeSlot になってしまう。
+      // isFading を解除して playTrack で仕切り直す。
       if (myOp !== operationId || !isPlaying) return;
       console.warn('Next play failed:', err);
-      finishCrossfade(outSlot, inSlot);
+      isFading = false;
+      setSlotGain(outSlot, 1);   // outSlot を音量MAX に戻す
+      setSlotGain(inSlot,  0);
+      setTimeout(() => { if (myOp === operationId && isPlaying) playTrack(false); }, 300);
     });
   }
 
@@ -2010,6 +2072,16 @@ function finishCrossfade(outSlot, inSlot) {
   // operationId を世代ガードに使うことで、スキップ・連打時に
   // 古い finishCrossfade のタイマーが余分に triggerNextSong を
   // 発火するのを防ぐ。
+  //
+  // toggleFullPlay 解除→クロスフェード完了後は slotEndTime が既に過去の時刻になっており、
+  // そのまま使うと triggerNextSong が 100ms 後に即発火してしまう。
+  // slotEndTime の残り時間が playDuration の半分未満のとき（＝期限切れ or 過去）
+  // 新しい曲に対してフルスロットをリセットする。
+  const leftMs = slotEndTime - Date.now();
+  if (leftMs < playDuration * 500) {
+    slotEndTime = Date.now() + (playDuration + fadeDuration) * 1000;
+    startCountdown(playDuration + fadeDuration, slotEndTime);
+  }
   const myFinishOp = operationId;
   clearTimeout(fadeTimer);
   fadeTimer = setTimeout(() => {
@@ -2034,25 +2106,18 @@ function skipTrack() {
   clearTimeout(fadeTimer);
   clearTimeout(preloadTimer);
   if (_preloadMetaCleanup) { _preloadMetaCleanup(); _preloadMetaCleanup = null; }
+  if (_onFullEnded) { audios.forEach(a => a.removeEventListener('ended', _onFullEnded)); _onFullEnded = null; }
   preloadedForIdx = -1;
   clearInterval(xfadeTimer);
   clearInterval(tickTimer);
   updateFullBtn();
 
-  // クロスフェード途中でスキップした場合、inSlot の audio が再生中の可能性がある。
-  // 両スロットを一旦止めてアクティブスロットだけ続行する形に整える。
-  const inSlot = 1 - activeSlot;
-  try { audios[inSlot].pause(); } catch (_) {}
-  clearSlotSrc(inSlot);
-  setSlotGain(inSlot, 0);
-
-  // activeSlot のゲインを確実に1にリセット（フェードイン途中でも対応）
-  setSlotGain(activeSlot, 1);
-
-  // クロスフェード途中でスキップした場合は currentIdx が未確定のまま残ることがある。
-  // nextIdx（表示上「次の曲」として確定していた曲）を currentIdx に昇格させてから
-  // 新たな nextIdx を選ぶことで、表示と再生の対応がずれるのを防ぐ。
+  // クロスフェード途中でスキップした場合、ゲインが大きい方（主役）を
+  // activeSlot に昇格させ、小さい方を止める。
+  // ゲインはいじらず現在値のまま startCrossfade に引き継ぐ（急激な音量変化を防ぐ）。
+  resolveActiveSlot();
   if (nextIdx >= 0) currentIdx = nextIdx;
+
   nextIdx = randIdx(currentIdx);
 
   const nextFile = files[nextIdx];
@@ -2144,6 +2209,7 @@ function setUIFullPlay() {
   document.getElementById('countdown').classList.remove('fading');
   document.getElementById('countdown').classList.add('full');
   document.getElementById('progressFill').classList.add('full-mode');
+  document.getElementById('nextTitle').textContent = '— フルで再生中 —';
 }
 
 function setUIIdle() {
