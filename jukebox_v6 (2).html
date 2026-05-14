@@ -1,0 +1,1665 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JUKEBOX</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #000d0f;
+  --panel:     #001518;
+  --panel2:    #001e22;
+  --panel3:    #002830;
+  --amber:     #00e5cc;
+  --amber-dim: #008a80;
+  --amber-lo:  #003d40;
+  --neon:      #00ffee;
+  --neon-glow: rgba(0,255,238,0.5);
+  --cream:     #d0f7f5;
+  --dim:       #2a8a88;
+  --dim2:      #1a5a5a;
+  --green:     #3dffe0;
+  --green-glow:rgba(61,255,224,0.4);
+  --red:       #ff4455;
+}
+
+body {
+  background: var(--bg);
+  color: var(--cream);
+  font-family: 'Courier New', Courier, monospace;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(0,229,204,0.07) 0%, transparent 70%),
+    repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,200,180,0.012) 3px, rgba(0,200,180,0.012) 4px);
+}
+
+/* ─── JUKEBOX SHELL ─── */
+.jukebox {
+  width: 100%;
+  max-width: 660px;
+  background: var(--panel);
+  border: 2px solid var(--amber-dim);
+  border-radius: 16px;
+  box-shadow:
+    0 0 0 1px rgba(0,229,204,0.08),
+    0 0 50px rgba(0,229,204,0.18),
+    0 0 120px rgba(0,229,204,0.07),
+    inset 0 1px 0 rgba(0,230,210,0.06);
+  overflow: hidden;
+}
+
+/* ─── HEADER ─── */
+.header {
+  background: var(--panel2);
+  border-bottom: 1px solid var(--amber-dim);
+  padding: 22px 28px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.header-left { flex: 1; }
+
+.header h1 {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 44px;
+  letter-spacing: 18px;
+  color: var(--amber);
+  text-shadow:
+    0 0 8px  rgba(0,255,238,0.8),
+    0 0 24px rgba(0,220,200,0.4),
+    0 0 60px rgba(0,180,160,0.15);
+  line-height: 1;
+  margin-left: 2px;
+}
+
+.header-sub {
+  font-size: 10px;
+  letter-spacing: 5px;
+  color: var(--dim);
+  margin-top: 6px;
+  text-transform: uppercase;
+}
+
+/* spinning vinyl */
+.vinyl {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 50%, #002a28 0%, #002a28 12%, transparent 12%),
+    repeating-radial-gradient(circle at 50% 50%, #001a18 0px, #001a18 3px, #000d0d 3px, #000d0d 6px);
+  border: 3px solid #004a48;
+  box-shadow:
+    0 0 0 2px #001a18,
+    0 0 0 4px var(--amber-dim),
+    0 0 20px rgba(0,229,204,0.15);
+  position: relative;
+  flex-shrink: 0;
+  animation: spin 4s linear infinite paused;
+}
+.vinyl.spinning { animation-play-state: running; }
+.vinyl::after {
+  content: '';
+  position: absolute;
+  inset: 50%;
+  transform: translate(-50%,-50%);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 6px var(--neon-glow);
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ─── VISUALIZER ─── */
+.viz-wrap {
+  background: var(--bg);
+  border-bottom: 1px solid var(--amber-lo);
+  padding: 0 0 2px;
+  position: relative;
+}
+canvas#viz {
+  display: block;
+  width: 100%;
+  height: 70px;
+  image-rendering: pixelated;
+}
+.viz-overlay {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(to right, var(--bg) 0%, transparent 5%, transparent 95%, var(--bg) 100%);
+  pointer-events: none;
+}
+
+/* ─── NOW PLAYING ─── */
+.now-playing {
+  padding: 18px 28px;
+  background: var(--panel2);
+  border-bottom: 1px solid var(--amber-lo);
+}
+
+.np-label {
+  font-size: 9px;
+  letter-spacing: 4px;
+  color: var(--dim);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.np-title {
+  font-size: 18px;
+  color: var(--cream);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 26px;
+  letter-spacing: 0.5px;
+  transition: color 0.3s;
+}
+.np-title.idle { color: var(--dim); font-style: italic; }
+
+.progress-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 10px;
+}
+
+.progress-bg {
+  flex: 1;
+  height: 5px;
+  background: var(--amber-lo);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(to right, var(--amber-dim), var(--amber), var(--neon));
+  border-radius: 3px;
+  width: 0%;
+  transition: width 0.1s linear;
+  box-shadow: 0 0 6px var(--neon-glow);
+}
+/* full play mode: green progress */
+.progress-fill.full-mode {
+  background: linear-gradient(to right, #1a8f50, var(--green), #a0ffcc);
+  box-shadow: 0 0 6px var(--green-glow);
+}
+
+.countdown-display {
+  font-size: 30px;
+  color: var(--amber);
+  min-width: 70px;
+  text-align: right;
+  letter-spacing: 2px;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 10px var(--neon-glow);
+  transition: color 0.3s;
+}
+.countdown-display.fading { color: var(--neon); }
+.countdown-display.full  { color: var(--green); text-shadow: 0 0 10px var(--green-glow); }
+
+.phase-label {
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--dim);
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.phase-pill {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: var(--amber-lo);
+  color: var(--amber-dim);
+  font-size: 9px;
+  letter-spacing: 2px;
+  transition: all 0.3s;
+}
+.phase-pill.active      { background: rgba(0,229,204,0.15); color: var(--amber); }
+.phase-pill.fading-pill { background: rgba(0,255,238,0.15);  color: var(--neon); }
+.phase-pill.full-pill   { background: rgba(61,255,224,0.15); color: var(--green); }
+
+/* ─── NEXT TRACK ─── */
+.next-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 8px;
+}
+.next-prefix { font-size: 9px; letter-spacing: 3px; color: var(--dim); flex-shrink: 0; }
+.next-name   { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ─── STATUS BAR ─── */
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 28px;
+  background: var(--panel3);
+  border-bottom: 1px solid var(--amber-lo);
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dim2);
+  flex-shrink: 0;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+.status-dot.on    { background: var(--green); box-shadow: 0 0 8px var(--green); animation: blink 2s ease-in-out infinite; }
+.status-dot.xfade { background: var(--neon);  box-shadow: 0 0 8px var(--neon-glow); animation: blink 0.7s ease-in-out infinite; }
+.status-dot.full  { background: var(--green); box-shadow: 0 0 8px var(--green); }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.25} }
+
+.status-text     { font-size: 10px; letter-spacing: 2px; color: var(--dim); flex: 1; }
+.file-count-badge{ font-size: 10px; color: var(--dim2); letter-spacing: 1px; }
+
+/* ─── CONTROLS ─── */
+.controls {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr 1fr;
+  grid-template-rows: auto auto;
+  gap: 10px;
+  padding: 18px 28px;
+  border-bottom: 1px solid var(--amber-lo);
+}
+
+.btn {
+  padding: 13px 8px;
+  border: 1px solid var(--amber-lo);
+  background: transparent;
+  color: var(--amber-dim);
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.15s;
+  outline: none;
+  white-space: nowrap;
+}
+.btn:hover:not(:disabled) {
+  border-color: var(--amber);
+  color: var(--amber);
+  background: rgba(0,229,204,0.07);
+  box-shadow: 0 0 14px rgba(0,229,204,0.2);
+}
+.btn:active:not(:disabled) { transform: scale(0.97); }
+
+.btn.primary {
+  border-color: var(--amber);
+  color: var(--bg);
+  background: var(--amber);
+  font-weight: bold;
+  box-shadow: 0 0 18px rgba(0,229,204,0.4);
+  font-size: 13px;
+  letter-spacing: 3px;
+}
+.btn.primary:hover:not(:disabled) {
+  background: var(--neon);
+  border-color: var(--neon);
+  box-shadow: 0 0 28px var(--neon-glow);
+  color: var(--bg);
+}
+.btn.primary.stop-mode {
+  background: transparent;
+  color: var(--red);
+  border-color: var(--red);
+  box-shadow: 0 0 14px rgba(255,68,85,0.2);
+}
+.btn.primary.stop-mode:hover:not(:disabled) {
+  background: rgba(255,68,85,0.1);
+  box-shadow: 0 0 22px rgba(255,68,85,0.3);
+}
+
+/* Full Play button */
+.btn.full-btn {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  letter-spacing: 2px;
+  padding: 11px 8px;
+}
+
+/* Restore button */
+.btn.restore-btn {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  letter-spacing: 2px;
+  padding: 11px 8px;
+  border-color: var(--amber);
+  color: var(--amber);
+  background: rgba(0,229,204,0.08);
+  box-shadow: 0 0 12px rgba(0,229,204,0.15);
+}
+.btn.restore-btn:hover:not(:disabled) {
+  background: rgba(0,229,204,0.18);
+  box-shadow: 0 0 22px rgba(0,229,204,0.3);
+}
+.btn.full-btn.full-active {
+  border-color: var(--green);
+  color: var(--green);
+  background: rgba(61,255,143,0.06);
+  box-shadow: 0 0 18px rgba(61,255,143,0.2);
+}
+.btn.full-btn.full-active:hover:not(:disabled) {
+  background: rgba(61,255,143,0.12);
+  box-shadow: 0 0 28px rgba(61,255,143,0.35);
+}
+
+.btn:disabled { opacity: 0.25; cursor: not-allowed; }
+
+/* ─── RESTORE BANNER ─── */
+#restoreBanner {
+  padding: 14px 28px;
+  background: rgba(0,229,204,0.10);
+  border-bottom: 2px solid var(--amber);
+  border-top: 2px solid var(--amber);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  animation: bannerPulse 2.5s ease-in-out infinite;
+}
+@keyframes bannerPulse {
+  0%,100% { box-shadow: inset 0 0 0 0 rgba(0,229,204,0.0); }
+  50%      { box-shadow: inset 0 0 24px 0 rgba(0,229,204,0.12); }
+}
+#restoreIcon {
+  font-size: 22px;
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 6px rgba(0,229,204,0.6));
+}
+#restoreTextGroup { flex: 1; }
+#restoreTitle {
+  font-size: 11px;
+  letter-spacing: 3px;
+  color: var(--amber);
+  text-transform: uppercase;
+  margin-bottom: 2px;
+  text-shadow: 0 0 8px rgba(0,229,204,0.4);
+}
+#restoreInfo {
+  font-size: 10px;
+  color: var(--amber-dim);
+  letter-spacing: 1px;
+}
+#restoreBtn {
+  padding: 10px 18px;
+  border: 2px solid var(--amber);
+  background: var(--amber);
+  color: var(--bg);
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+  box-shadow: 0 0 18px rgba(0,229,204,0.35);
+  white-space: nowrap;
+}
+#restoreBtn:hover {
+  background: var(--neon);
+  border-color: var(--neon);
+  box-shadow: 0 0 28px var(--neon-glow);
+}
+#restoreBtn:active { transform: scale(0.97); }
+
+/* ─── SETTINGS ─── */
+.settings {
+  padding: 18px 28px;
+  border-bottom: 1px solid var(--amber-lo);
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.settings-title {
+  font-size: 9px;
+  letter-spacing: 4px;
+  color: var(--dim);
+  text-transform: uppercase;
+}
+.total-badge {
+  font-size: 10px;
+  color: var(--amber-dim);
+  letter-spacing: 1px;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.setting-row:last-child { margin-bottom: 0; }
+
+.setting-label {
+  font-size: 10px;
+  color: var(--cream);
+  letter-spacing: 1px;
+  width: 130px;
+  flex-shrink: 0;
+}
+
+input[type=range] {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 3px;
+  background: var(--amber-lo);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--amber);
+  border-radius: 50%;
+  box-shadow: 0 0 8px var(--neon-glow);
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+input[type=range]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: var(--amber);
+  border: none;
+  border-radius: 50%;
+  box-shadow: 0 0 8px var(--neon-glow);
+  cursor: pointer;
+}
+/* volume slider thumb = green */
+#sliderVol::-webkit-slider-thumb { background: var(--green); box-shadow: 0 0 8px var(--green-glow); }
+#sliderVol::-moz-range-thumb     { background: var(--green); box-shadow: 0 0 8px var(--green-glow); }
+
+.setting-val {
+  font-size: 13px;
+  color: var(--amber);
+  min-width: 36px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.setting-val.vol-val { color: var(--green); }
+
+/* ─── HISTORY ─── */
+.history-wrap {
+  padding: 10px 28px 6px;
+  border-bottom: 1px solid var(--amber-lo);
+  display: none;
+}
+.history-label {
+  font-size: 9px;
+  letter-spacing: 4px;
+  color: var(--dim2);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.histlist {
+  list-style: none;
+}
+.histlist li {
+  font-size: 10px;
+  color: var(--dim2);
+  padding: 1px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.5px;
+}
+.histlist li:first-child { color: var(--dim); }
+.histlist li::before {
+  content: '⏮ ';
+  opacity: 0.4;
+  font-size: 8px;
+}
+
+/* ─── FILE LIST ─── */
+.filelist-wrap {
+  padding: 12px 28px 16px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+.filelist-wrap::-webkit-scrollbar { width: 3px; }
+.filelist-wrap::-webkit-scrollbar-track { background: transparent; }
+.filelist-wrap::-webkit-scrollbar-thumb { background: var(--amber-lo); border-radius: 2px; }
+
+.filelist {
+  list-style: none;
+}
+.filelist li {
+  font-size: 10px;
+  color: var(--dim2);
+  padding: 2px 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.5px;
+  transition: color 0.2s, background 0.15s;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.filelist li:hover {
+  color: var(--amber-dim);
+  background: rgba(0,229,204,0.05);
+}
+.filelist li.active {
+  color: var(--amber);
+  text-shadow: 0 0 6px rgba(0,229,204,0.4);
+}
+
+/* ─── FOOTER ─── */
+.footer {
+  padding: 10px 28px;
+  background: var(--panel2);
+  border-top: 1px solid var(--amber-lo);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 9px;
+  color: var(--dim2);
+  letter-spacing: 2px;
+}
+.kbd-hint { letter-spacing: 1px; opacity: 0.6; }
+
+/* hidden input */
+#folderInput { display: none; }
+</style>
+</head>
+<body>
+
+<div class="jukebox">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-left">
+      <h1>LAMBOX</h1>
+      <div class="header-sub">Random Music Player</div>
+    </div>
+    <div class="vinyl" id="vinyl"></div>
+  </div>
+
+  <!-- VISUALIZER -->
+  <div class="viz-wrap">
+    <canvas id="viz"></canvas>
+    <div class="viz-overlay"></div>
+  </div>
+
+  <!-- NOW PLAYING -->
+  <div class="now-playing">
+    <div class="np-label">▶ NOW PLAYING</div>
+    <div class="np-title idle" id="npTitle">— フォルダを選択して再生を開始してください —</div>
+
+    <div class="progress-row">
+      <div class="progress-bg">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div class="countdown-display" id="countdown">--.-</div>
+    </div>
+
+    <div class="phase-label">
+      <span class="phase-pill" id="pillPlay">PLAYING</span>
+      <span>→</span>
+      <span class="phase-pill" id="pillFade">CROSSFADE</span>
+      <span>→</span>
+      <span class="phase-pill" id="pillFull">FULL PLAY</span>
+    </div>
+
+    <div class="next-row">
+      <span class="next-prefix">NEXT ▶</span>
+      <span class="next-name" id="nextTitle">—</span>
+    </div>
+  </div>
+
+  <!-- STATUS -->
+  <div class="status-bar">
+    <div class="status-dot" id="statusDot"></div>
+    <div class="status-text" id="statusText">STOPPED</div>
+    <div class="file-count-badge" id="fileBadge">0 files</div>
+  </div>
+
+  <!-- CONTROLS -->
+  <div class="controls">
+    <button class="btn" id="btnFolder">📁 フォルダ選択</button>
+    <button class="btn primary" id="btnPlay" disabled onclick="togglePlay()">▶ PLAY</button>
+    <button class="btn" id="btnSkip" disabled onclick="skipTrack()">⏭ スキップ</button>
+    <button class="btn full-btn" id="btnFull" disabled onclick="toggleFullPlay()">♾ フルで聴く</button>
+    <button class="btn restore-btn" id="btnRestore" onclick="restoreFolder()">↩ 前回のフォルダを再読み込み</button>
+  </div>
+
+  <!-- RESTORE BANNER -->
+  <div id="restoreBanner" style="display:none">
+    <span id="restoreIcon">📂</span>
+    <div id="restoreTextGroup">
+      <div id="restoreTitle">▶ 前回のフォルダ</div>
+      <div id="restoreInfo"></div>
+    </div>
+    <button id="restoreBtn">↩ ワンクリックで復元</button>
+  </div>
+
+  <!-- SETTINGS -->
+  <div class="settings">
+    <div class="settings-header">
+      <div class="settings-title">⚙ SETTINGS</div>
+      <div class="total-badge">合計 1枠 = <span id="totalBadge">20s</span></div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">再生時間 (solo)</div>
+      <input type="range" id="sliderPlay" min="5" max="120" value="12" oninput="onSettingChange()">
+      <div class="setting-val" id="valPlay">12s</div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">クロスフェード</div>
+      <input type="range" id="sliderFade" min="1" max="30" value="8" oninput="onSettingChange()">
+      <div class="setting-val" id="valFade">8s</div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">マスターボリューム</div>
+      <input type="range" id="sliderVol" min="0" max="100" value="80" oninput="onVolumeChange()">
+      <div class="setting-val vol-val" id="valVol">80%</div>
+    </div>
+  </div>
+
+  <!-- HISTORY -->
+  <div class="history-wrap" id="historyWrap">
+    <div class="history-label">◷ 再生履歴</div>
+    <ul class="histlist" id="historyList"></ul>
+  </div>
+
+  <!-- FILE LIST -->
+  <div class="filelist-wrap">
+    <ul class="filelist" id="fileList"></ul>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <span>RANDOM JUKEBOX</span>
+    <span class="kbd-hint">SPACE=再生 　→=スキップ 　F=フルで聴く</span>
+    <span>HTML5 AUDIO</span>
+  </div>
+
+</div>
+
+<input type="file" id="folderInput" webkitdirectory multiple>
+
+<script>
+// ════════════════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════════════════
+let files        = [];
+let currentIdx   = -1;
+let nextIdx      = -1;
+let isPlaying    = false;
+let isFading     = false;
+let isFullPlay   = false;      // フルで聴くモード
+let activeSlot   = 0;
+
+let playDuration = 12;         // solo play seconds (12 + 8 = 20)
+let fadeDuration = 8;          // crossfade seconds
+let masterVolume = 0.8;        // 0.0 – 1.0
+
+let slotEndTime  = 0;
+let fadeTimer    = null;
+let tickTimer    = null;
+let xfadeTimer   = null;
+
+let playHistory  = [];         // 再生履歴 (最大5件)
+
+// ── 拡張子を除いた表示名 ──
+function stripExt(filename) {
+  return filename.replace(/\.[^.]+$/, '');
+}
+
+// ════════════════════════════════════════════════════════
+//  AUDIO ELEMENTS
+// ════════════════════════════════════════════════════════
+const audioA = new Audio();
+const audioB = new Audio();
+const audios = [audioA, audioB];
+audioA.preload = audioB.preload = 'none';
+
+// ════════════════════════════════════════════════════════
+//  WEB AUDIO API
+// ════════════════════════════════════════════════════════
+let actx       = null;
+let analyser   = null;
+let gainA      = null;
+let gainB      = null;
+let masterGain = null;
+
+function initAudioContext() {
+  if (actx) {
+    if (actx.state === 'suspended') actx.resume();
+    return;
+  }
+  try {
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+
+    const srcA = actx.createMediaElementSource(audioA);
+    const srcB = actx.createMediaElementSource(audioB);
+
+    gainA = actx.createGain(); gainA.gain.value = 1;
+    gainB = actx.createGain(); gainB.gain.value = 0;
+
+    analyser = actx.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.82;
+
+    masterGain = actx.createGain();
+    masterGain.gain.value = masterVolume;
+
+    // WebAudio がゲイン制御を引き継ぐので element.volume を 1.0 にリセット
+    // （boot 時に fallback で 0 にセットされていると次の曲が無音になるバグを防ぐ）
+    audioA.volume = 1.0;
+    audioB.volume = 1.0;
+
+    srcA.connect(gainA); gainA.connect(analyser);
+    srcB.connect(gainB); gainB.connect(analyser);
+    analyser.connect(masterGain);
+    masterGain.connect(actx.destination);
+  } catch(e) {
+    console.warn('AudioContext unavailable:', e);
+  }
+}
+
+function setSlotGain(slot, value) {
+  const v = Math.max(0, Math.min(1, value));
+  if (actx && gainA) {
+    (slot === 0 ? gainA : gainB).gain.value = v;
+  } else {
+    audios[slot].volume = v * masterVolume;
+  }
+}
+
+function applyMasterVolume() {
+  if (actx && masterGain) {
+    masterGain.gain.value = masterVolume;
+  } else {
+    // fallback: re-apply to both slots
+    const slotVols = [gainA ? gainA.gain.value : (activeSlot === 0 ? 1 : 0),
+                      gainB ? gainB.gain.value : (activeSlot === 1 ? 1 : 0)];
+    audios.forEach((a, i) => { a.volume = slotVols[i] * masterVolume; });
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//  CANVAS VISUALIZER
+// ════════════════════════════════════════════════════════
+const canvas = document.getElementById('viz');
+const ctx2d  = canvas.getContext('2d');
+
+function resizeCanvas() {
+  const rect = canvas.getBoundingClientRect();
+  canvas.width  = Math.round(rect.width  * window.devicePixelRatio || rect.width);
+  canvas.height = Math.round(rect.height * window.devicePixelRatio || rect.height);
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+let freqData = null;
+
+(function vizLoop() {
+  requestAnimationFrame(vizLoop);
+  const W = canvas.width, H = canvas.height;
+  ctx2d.clearRect(0, 0, W, H);
+
+  if (analyser && isPlaying) {
+    if (!freqData) freqData = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(freqData);
+    const bins = freqData.length;
+    const bw   = Math.max(1, Math.floor(W / bins));
+    const gap  = Math.max(0, Math.floor(bw * 0.15));
+
+    for (let i = 0; i < bins; i++) {
+      const v  = freqData[i] / 255;
+      const bh = Math.max(2, v * H);
+      const x  = Math.floor(i * (W / bins));
+      const g  = ctx2d.createLinearGradient(0, H, 0, H - bh);
+      if (isFullPlay) {
+        g.addColorStop(0,   'rgba(20,120,60,0.9)');
+        g.addColorStop(0.5, 'rgba(61,255,143,0.95)');
+        g.addColorStop(1,   'rgba(160,255,200,1)');
+      } else {
+        g.addColorStop(0,   'rgba(0,100,120,0.9)');
+        g.addColorStop(0.5, 'rgba(0,229,204,0.95)');
+        g.addColorStop(1,   'rgba(0,255,238,1)');
+      }
+      ctx2d.fillStyle = g;
+      ctx2d.fillRect(x + gap/2, H - bh, bw - gap, bh);
+      if (v > 0.05) {
+        ctx2d.fillStyle = isFullPlay ? 'rgba(180,255,240,0.6)' : 'rgba(120,255,245,0.6)';
+        ctx2d.fillRect(x + gap/2, H - bh - 2, bw - gap, 2);
+      }
+    }
+  } else {
+    const t = Date.now() / 1000;
+    const n = 40;
+    const bw = W / n;
+    for (let i = 0; i < n; i++) {
+      const wave  = (Math.sin(t * 0.6 + i * 0.42) * 0.5 + 0.5);
+      const bh    = wave * 12 + 2;
+      const alpha = wave * 0.15 + 0.04;
+      ctx2d.fillStyle = `rgba(0,229,204,${alpha})`;
+      ctx2d.fillRect(i * bw + 1, H - bh, bw - 2, bh);
+    }
+  }
+})();
+
+// ════════════════════════════════════════════════════════
+//  INDEXEDDB — フォルダハンドル永続化
+// ════════════════════════════════════════════════════════
+const IDB_NAME = 'jukeboxDB', IDB_STORE = 'kv';
+const idbOpen = () => new Promise((res, rej) => {
+  const r = indexedDB.open(IDB_NAME, 1);
+  r.onupgradeneeded = e => e.target.result.createObjectStore(IDB_STORE);
+  r.onsuccess = e => res(e.target.result);
+  r.onerror   = e => rej(e.target.error);
+});
+const idbGet = async key => {
+  try {
+    const db = await idbOpen();
+    return await new Promise((res, rej) => {
+      const req = db.transaction(IDB_STORE).objectStore(IDB_STORE).get(key);
+      req.onsuccess = e => res(e.target.result ?? null);
+      req.onerror   = e => rej(e.target.error);
+    });
+  } catch(e) { return null; }
+};
+const idbSet = async (key, val) => {
+  try {
+    const db = await idbOpen();
+    await new Promise((res, rej) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(val, key);
+      tx.oncomplete = () => res();
+      tx.onerror    = e => rej(e.target.error);
+    });
+  } catch(e) {}
+};
+
+// ════════════════════════════════════════════════════════
+//  FILE SELECTION
+// ════════════════════════════════════════════════════════
+
+// フォルダボタン: onclick 属性なし、JS で完全管理
+document.getElementById('btnFolder').addEventListener('click', () => selectFolder());
+
+async function selectFolder() {
+  if (window.showDirectoryPicker) {
+    try {
+      const handle = await window.showDirectoryPicker({ mode: 'read' });
+      await idbSet('folderHandle', handle);
+      localStorage.setItem('lastFolderName', handle.name);
+      await loadFilesFromHandle(handle);
+      updateFolderBtn(handle.name);
+      hideBanner();
+    } catch(e) {
+      if (e.name !== 'AbortError') console.warn('Folder picker error:', e);
+    }
+  } else {
+    document.getElementById('folderInput').click();
+  }
+}
+
+// fallback: <input webkitdirectory>
+document.getElementById('folderInput').addEventListener('change', function(e) {
+  const exts = /\.(mp3|wav|ogg|flac|aac|m4a|opus|weba|wma)$/i;
+  files = Array.from(e.target.files)
+    .filter(f => exts.test(f.name))
+    .sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+  renderFileList();
+  document.getElementById('fileBadge').textContent = files.length + ' files';
+  document.getElementById('btnPlay').disabled = files.length === 0;
+  if (isPlaying) stopAll();
+  // フォルダ名をLocalStorageに保存してボタンを更新
+  if (e.target.files.length > 0) {
+    const folderName = e.target.files[0].webkitRelativePath.split('/')[0] || 'フォルダ';
+    localStorage.setItem('lastFolderName', folderName);
+    updateFolderBtn(folderName);
+    updateRestoreBtn(folderName);
+  }
+});
+
+async function loadFilesFromHandle(handle) {
+  const exts = /\.(mp3|wav|ogg|flac|aac|m4a|opus|weba|wma)$/i;
+  const arr  = [];
+  for await (const entry of handle.values()) {
+    if (entry.kind === 'file' && exts.test(entry.name)) {
+      arr.push(await entry.getFile());
+    }
+  }
+  arr.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+  files = arr;
+  renderFileList();
+  document.getElementById('fileBadge').textContent = files.length + ' files';
+  document.getElementById('btnPlay').disabled = files.length === 0;
+  if (isPlaying) stopAll();
+}
+
+function updateFolderBtn(name) {
+  const short = name.length > 10 ? name.slice(0, 10) + '…' : name;
+  document.getElementById('btnFolder').textContent = `📂 ${short}`;
+}
+
+function hideBanner() {
+  document.getElementById('restoreBanner').style.display = 'none';
+}
+
+function showBanner(folderName, onRestoreClick) {
+  const short = folderName.length > 28 ? folderName.slice(0, 28) + '…' : folderName;
+  document.getElementById('restoreInfo').textContent = `「${short}」を検出しました`;
+  document.getElementById('restoreBanner').style.display = 'flex';
+  // ボタンを複製してリスナーをリセット
+  const oldBtn = document.getElementById('restoreBtn');
+  const newBtn = oldBtn.cloneNode(true);
+  oldBtn.parentNode.replaceChild(newBtn, oldBtn);
+  newBtn.addEventListener('click', onRestoreClick);
+}
+
+async function tryRestoreFolder() {
+  const savedName = localStorage.getItem('lastFolderName');
+  updateRestoreBtn(savedName);
+
+  if (!window.showDirectoryPicker) return;
+  try {
+    const handle = await idbGet('folderHandle');
+    if (!handle) return;
+
+    let perm;
+    try { perm = await handle.queryPermission({ mode: 'read' }); }
+    catch(e) { perm = 'prompt'; }
+
+    if (perm === 'granted') {
+      try {
+        await loadFilesFromHandle(handle);
+        updateFolderBtn(handle.name);
+        hideBanner();
+      } catch(e) {
+        showBanner(savedName || handle.name || 'フォルダ', () => restoreWithPermission(handle));
+      }
+    } else {
+      showBanner(savedName || handle.name || 'フォルダ', () => restoreWithPermission(handle));
+    }
+  } catch(e) {
+    console.log('Folder restore error:', e);
+  }
+}
+
+function updateRestoreBtn(name) {
+  const btn = document.getElementById('btnRestore');
+  if (name) {
+    const short = name.length > 16 ? name.slice(0, 16) + '…' : name;
+    btn.textContent = `↩ 前回:「${short}」を再読み込み`;
+    btn.style.opacity = '1';
+  } else {
+    btn.textContent = '↩ 前回のフォルダを再読み込み';
+    btn.style.opacity = '0.45';
+  }
+}
+
+// 「前回のフォルダを再読み込み」ボタン押下
+async function restoreFolder() {
+  if (window.showDirectoryPicker) {
+    try {
+      const handle = await idbGet('folderHandle');
+      if (handle) {
+        await restoreWithPermission(handle);
+        return;
+      }
+    } catch(e) {}
+  }
+  // IDB未対応 or ハンドルなし → フォルダ選択ダイアログを開く
+  selectFolder();
+}
+
+async function restoreWithPermission(handle) {
+  try {
+    let perm;
+    try { perm = await handle.queryPermission({ mode: 'read' }); }
+    catch(e) { perm = 'prompt'; }
+
+    if (perm !== 'granted') {
+      perm = await handle.requestPermission({ mode: 'read' });
+    }
+    if (perm === 'granted') {
+      await loadFilesFromHandle(handle);
+      updateFolderBtn(handle.name);
+      localStorage.setItem('lastFolderName', handle.name);
+    } else {
+      alert('フォルダへのアクセスが拒否されました。「フォルダ選択」ボタンから再選択してください。');
+    }
+  } catch(e) {
+    console.warn('Permission request failed:', e);
+    alert('フォルダの復元に失敗しました。「フォルダ選択」ボタンから再選択してください。');
+  }
+  hideBanner();
+}
+
+function renderFileList() {
+  const ul = document.getElementById('fileList');
+  ul.innerHTML = '';
+  files.forEach((f, i) => {
+    const li = document.createElement('li');
+    li.id = 'fi-' + i;
+    li.textContent = stripExt(f.name);
+    li.title = f.name;
+    li.addEventListener('click', () => playSpecificTrack(i));
+    ul.appendChild(li);
+  });
+}
+
+function highlightFile(idx) {
+  document.querySelectorAll('.filelist li').forEach(l => l.classList.remove('active'));
+  const li = document.getElementById('fi-' + idx);
+  if (li) { li.classList.add('active'); }
+}
+
+// ════════════════════════════════════════════════════════
+//  PLAY SPECIFIC TRACK (曲一覧クリック — クロスフェードで切り替え)
+// ════════════════════════════════════════════════════════
+function playSpecificTrack(idx) {
+  if (files.length === 0 || idx < 0 || idx >= files.length) return;
+
+  // まだ再生していない場合は通常起動
+  if (!isPlaying) {
+    initAudioContext();
+    isPlaying = true;
+    activeSlot = 0;
+    document.getElementById('btnPlay').textContent = '⏹ STOP';
+    document.getElementById('btnPlay').classList.add('stop-mode');
+    document.getElementById('btnSkip').disabled = false;
+    document.getElementById('btnFull').disabled = false;
+
+    isFading   = false;
+    isFullPlay = false;
+    clearTimeout(fadeTimer);
+    clearInterval(xfadeTimer);
+    clearInterval(tickTimer);
+    updateFullBtn();
+
+    audios.forEach(a => { a.pause(); try { a.src = ''; } catch(_) {} });
+    activeSlot = 0;
+    setSlotGain(0, 1);
+    setSlotGain(1, 0);
+
+    nextIdx = idx;
+    playTrack(false);
+    return;
+  }
+
+  // 再生中 → クロスフェードで指定曲へ切り替え
+  if (isFading) return; // クロスフェード中は無視
+
+  isFullPlay = false;
+  clearTimeout(fadeTimer);
+  clearInterval(xfadeTimer);
+  clearInterval(tickTimer);
+  updateFullBtn();
+
+  // アクティブスロットのゲインを確実に1にリセット（フェードイン途中でも対応）
+  setSlotGain(activeSlot, 1);
+
+  nextIdx = idx;
+  const nextFile = files[nextIdx];
+  if (nextFile) setUIPlaying(nextFile.name, true);
+
+  // クロスフェード(fadeDuration)＋ソロ再生(playDuration)の合計でタイマー設定
+  slotEndTime = Date.now() + (fadeDuration + playDuration) * 1000;
+  startCountdown(fadeDuration + playDuration);
+  startCrossfade();
+}
+
+
+function onSettingChange() {
+  playDuration = +document.getElementById('sliderPlay').value;
+  fadeDuration = +document.getElementById('sliderFade').value;
+  document.getElementById('valPlay').textContent    = playDuration + 's';
+  document.getElementById('valFade').textContent    = fadeDuration + 's';
+  document.getElementById('totalBadge').textContent = (playDuration + fadeDuration) + 's';
+  // 設定をLocalStorageに永続化
+  localStorage.setItem('jukebox_play', document.getElementById('sliderPlay').value);
+  localStorage.setItem('jukebox_fade', document.getElementById('sliderFade').value);
+}
+
+function onVolumeChange() {
+  masterVolume = +document.getElementById('sliderVol').value / 100;
+  document.getElementById('valVol').textContent = Math.round(masterVolume * 100) + '%';
+  applyMasterVolume();
+  // ボリュームをLocalStorageに永続化
+  localStorage.setItem('jukebox_vol', document.getElementById('sliderVol').value);
+}
+
+// ════════════════════════════════════════════════════════
+//  HISTORY
+// ════════════════════════════════════════════════════════
+function addToHistory(name) {
+  if (!name || playHistory[0] === name) return;
+  playHistory.unshift(name);
+  if (playHistory.length > 5) playHistory.pop();
+  renderHistory();
+}
+
+function renderHistory() {
+  const ul   = document.getElementById('historyList');
+  const wrap = document.getElementById('historyWrap');
+  ul.innerHTML = '';
+  playHistory.forEach(name => {
+    const li = document.createElement('li');
+    li.textContent = stripExt(name);
+    ul.appendChild(li);
+  });
+  wrap.style.display = playHistory.length > 0 ? '' : 'none';
+}
+
+// ════════════════════════════════════════════════════════
+//  RANDOM HELPERS
+// ════════════════════════════════════════════════════════
+function randIdx(exclude = -1) {
+  if (files.length === 1) return 0;
+  let idx, tries = 0;
+  do { idx = Math.floor(Math.random() * files.length); tries++; }
+  while (idx === exclude && tries < 20);
+  return idx;
+}
+
+// ════════════════════════════════════════════════════════
+//  PLAY / STOP
+// ════════════════════════════════════════════════════════
+function togglePlay() {
+  if (isPlaying) { stopAll(); return; }
+  initAudioContext();
+  isPlaying  = true;
+  activeSlot = 0;
+  setSlotGain(0, 1);
+  setSlotGain(1, 0);
+  document.getElementById('btnPlay').textContent = '⏹ STOP';
+  document.getElementById('btnPlay').classList.add('stop-mode');
+  document.getElementById('btnSkip').disabled = false;
+  document.getElementById('btnFull').disabled = false;
+  playTrack(true);
+}
+
+function stopAll() {
+  isPlaying  = false;
+  isFading   = false;
+  isFullPlay = false;
+  clearTimeout(fadeTimer);
+  clearInterval(tickTimer);
+  clearInterval(xfadeTimer);
+
+  audios.forEach((a, i) => {
+    a.pause();
+    try { a.src = ''; } catch(_) {}
+    setSlotGain(i, i === 0 ? 1 : 0);
+  });
+
+  currentIdx = nextIdx = -1;
+
+  const btnPlay = document.getElementById('btnPlay');
+  btnPlay.textContent = '▶ PLAY';
+  btnPlay.classList.remove('stop-mode');
+  document.getElementById('btnSkip').disabled = true;
+  document.getElementById('btnFull').disabled = true;
+  updateFullBtn();
+
+  setUIIdle();
+  document.getElementById('vinyl').classList.remove('spinning');
+}
+
+// ════════════════════════════════════════════════════════
+//  FULL PLAY MODE
+// ════════════════════════════════════════════════════════
+function toggleFullPlay() {
+  if (!isPlaying) return;
+
+  if (isFullPlay) {
+    // フルモード解除 → ノーマルへ戻す
+    isFullPlay = false;
+    updateFullBtn();
+    clearInterval(tickTimer);
+
+    const audio = audios[activeSlot];
+    const rem   = isFinite(audio.duration) ? Math.max(0, audio.duration - audio.currentTime) : 0;
+
+    if (rem > fadeDuration + 1) {
+      // 残り時間でノーマルカウントダウン & フェードスケジュール
+      const soloRem = rem - fadeDuration;
+      slotEndTime   = Date.now() + rem * 1000;
+      startCountdown(rem);
+      clearTimeout(fadeTimer);
+      fadeTimer = setTimeout(() => {
+        if (isPlaying && !isFading) startCrossfade();
+      }, soloRem * 1000);
+    } else {
+      // すでにフェード圏内
+      startCrossfade();
+    }
+
+    setUIPlaying(files[currentIdx]?.name ?? '', false); // タイトル再セット (履歴追加なし)
+  } else {
+    // フルモード開始
+    isFullPlay = true;
+    isFading   = false;
+    clearTimeout(fadeTimer);
+    clearInterval(xfadeTimer);
+    clearInterval(tickTimer);
+    updateFullBtn();
+
+    const audio = audios[activeSlot];
+
+    // 曲が終わったら自動でノーマルへ戻り次の曲へ
+    function onFullEnded() {
+      audio.removeEventListener('ended', onFullEnded);
+      if (isPlaying && isFullPlay) {
+        isFullPlay = false;
+        updateFullBtn();
+        playTrack(false);
+      }
+    }
+    audio.addEventListener('ended', onFullEnded);
+
+    startFullCountdown();
+    setUIFullPlay();
+  }
+}
+
+function updateFullBtn() {
+  const btn = document.getElementById('btnFull');
+  if (!btn) return;
+  if (isFullPlay) {
+    btn.textContent = '⏱ ノーマルへ戻す';
+    btn.classList.add('full-active');
+  } else {
+    btn.textContent = '♾ フルで聴く';
+    btn.classList.remove('full-active');
+  }
+}
+
+function startFullCountdown() {
+  clearInterval(tickTimer);
+  const audio = audios[activeSlot];
+
+  tickTimer = setInterval(() => {
+    if (!isFullPlay) { clearInterval(tickTimer); return; }
+    const rem   = isFinite(audio.duration) ? Math.max(0, audio.duration - audio.currentTime) : 0;
+    const total = isFinite(audio.duration) ? audio.duration : 1;
+    const pct   = total > 0 ? ((total - rem) / total) * 100 : 0;
+
+    document.getElementById('countdown').textContent = rem.toFixed(1);
+    document.getElementById('progressFill').style.width = pct + '%';
+
+    if (rem <= 0) clearInterval(tickTimer);
+  }, 80);
+}
+
+// ════════════════════════════════════════════════════════
+//  CORE: PLAY A TRACK IN THE ACTIVE SLOT
+// ════════════════════════════════════════════════════════
+function playTrack(first = false) {
+  if (!isPlaying) return;
+  isFading   = false;
+  isFullPlay = false;
+  updateFullBtn();
+  clearTimeout(fadeTimer);
+  clearInterval(xfadeTimer);
+
+  currentIdx = first ? randIdx() : (nextIdx >= 0 ? nextIdx : randIdx());
+  nextIdx    = randIdx(currentIdx);
+
+  const slot  = activeSlot;
+  const audio = audios[slot];
+  const file  = files[currentIdx];
+
+  setSlotGain(slot, 0);   // フェードイン開始点
+  highlightFile(currentIdx);
+  document.getElementById('nextTitle').textContent = files[nextIdx]?.name ? stripExt(files[nextIdx].name) : '—';
+
+  audio.src = URL.createObjectURL(file);
+
+  function onMeta() {
+    audio.removeEventListener('loadedmetadata', onMeta);
+    if (!isPlaying) return;
+
+    const dur   = audio.duration;
+    const total = playDuration + fadeDuration;
+    if (isFinite(dur) && dur > total + 2) {
+      audio.currentTime = Math.random() * (dur - total - 1);
+    } else if (isFinite(dur) && dur > 4) {
+      audio.currentTime = Math.random() * (dur * 0.4);
+    }
+
+    audio.play().then(() => {
+      document.getElementById('vinyl').classList.add('spinning');
+      setUIPlaying(file.name, true);
+
+      // ── フェードイン（クロスフェード秒数に合わせる）──
+      const fiSec   = fadeDuration;
+      const fiSteps = Math.max(1, Math.round(fiSec * 20));
+      let fi = 0;
+      const fiTimer = setInterval(() => {
+        if (!isPlaying) { clearInterval(fiTimer); return; }
+        fi++;
+        setSlotGain(slot, Math.min(fi / fiSteps, 1));
+        if (fi >= fiSteps) clearInterval(fiTimer);
+      }, 50);
+
+      startCountdown(playDuration + fadeDuration);  // 合計時間でカウント
+
+      // カウントダウンが0になるタイミング（再生時間＋クロスフェード後）にtriggerNextSong
+      fadeTimer = setTimeout(() => {
+        if (isPlaying && !isFading && !isFullPlay) triggerNextSong();
+      }, (playDuration + fadeDuration) * 1000);
+
+    }).catch(err => {
+      console.warn('Play failed:', err);
+      if (isPlaying) setTimeout(() => playTrack(false), 500);
+    });
+  }
+
+  audio.addEventListener('loadedmetadata', onMeta);
+
+  function onEnded() {
+    audio.removeEventListener('ended', onEnded);
+    if (isPlaying && !isFading && !isFullPlay) {
+      clearTimeout(fadeTimer);
+      triggerNextSong();
+    }
+  }
+  audio.addEventListener('ended', onEnded);
+
+  audio.load();
+}
+
+// ════════════════════════════════════════════════════════
+//  TRIGGER NEXT SONG ― カウント0と同時に呼ばれる司令塔
+//  ① 曲名を次の曲に切り替え（履歴追加）
+//  ② 新しい20秒カウントダウンをスタート
+//  ③ クロスフェードを開始
+// ════════════════════════════════════════════════════════
+function triggerNextSong() {
+  if (!isPlaying || isFading || isFullPlay) return;
+
+  // ① NOW PLAYINGを次の曲名に切り替え（カウント0の瞬間）
+  const nextFile = files[nextIdx];
+  if (nextFile) setUIPlaying(nextFile.name, true);
+
+  // ② 新しいカウントダウンをスタート（クロスフェードはその最初のfadeDuration秒間で実行）
+  startCountdown(playDuration + fadeDuration);
+
+  // ③ クロスフェード開始
+  startCrossfade();
+}
+
+// ════════════════════════════════════════════════════════
+//  CROSSFADE
+// ════════════════════════════════════════════════════════
+function startCrossfade() {
+  if (!isPlaying || isFading) return;
+  isFading = true;
+  clearTimeout(fadeTimer);
+
+  const outSlot = activeSlot;
+  const inSlot  = 1 - activeSlot;
+  const inAudio = audios[inSlot];
+  const inFile  = files[nextIdx];
+
+  if (!inFile) { finishCrossfade(); return; }
+
+  setSlotGain(inSlot, 0);
+  inAudio.src = URL.createObjectURL(inFile);
+
+  function onNextMeta() {
+    inAudio.removeEventListener('loadedmetadata', onNextMeta);
+    if (!isPlaying) return;
+
+    const dur   = inAudio.duration;
+    const total = playDuration + fadeDuration;
+    if (isFinite(dur) && dur > total + 2) {
+      inAudio.currentTime = Math.random() * (dur - total - 1);
+    } else if (isFinite(dur) && dur > 4) {
+      inAudio.currentTime = Math.random() * (dur * 0.4);
+    }
+
+    inAudio.play().then(() => {
+      // 曲名はtriggerNextSong/skip/playSpecificTrackで既に切り替え済み
+      setUIFading();
+
+      const totalSteps = fadeDuration * 20;
+      let step = 0;
+      clearInterval(xfadeTimer);
+
+      // outSlotの現在ゲイン値を起点にフェードアウト（setSlotGain(activeSlot,1)済みなので通常は1）
+      const startOutGain = (actx && gainA)
+        ? (outSlot === 0 ? gainA.gain.value : gainB.gain.value)
+        : 1;
+
+      xfadeTimer = setInterval(() => {
+        if (!isPlaying) { clearInterval(xfadeTimer); return; }
+        step++;
+        const t = Math.min(step / totalSteps, 1);
+        setSlotGain(outSlot, startOutGain * (1 - t));
+        setSlotGain(inSlot,  t);
+
+        if (t >= 1) {
+          clearInterval(xfadeTimer);
+          finishCrossfade(outSlot, inSlot);
+        }
+      }, 50);
+
+    }).catch(err => {
+      console.warn('Next play failed:', err);
+      if (isPlaying) finishCrossfade(outSlot, inSlot);
+    });
+  }
+
+  inAudio.addEventListener('loadedmetadata', onNextMeta);
+  inAudio.load();
+}
+
+function finishCrossfade(outSlot, inSlot) {
+  if (!isPlaying) return;
+  isFading = false;
+
+  if (outSlot !== undefined) {
+    audios[outSlot].pause();
+    try { audios[outSlot].src = ''; } catch(_) {}
+    setSlotGain(outSlot, 0);
+  }
+
+  if (inSlot !== undefined) activeSlot = inSlot;
+  setSlotGain(activeSlot, 1);
+
+  currentIdx = nextIdx;
+  nextIdx    = randIdx(currentIdx);
+
+  highlightFile(currentIdx);
+  document.getElementById('nextTitle').textContent = files[nextIdx]?.name ? stripExt(files[nextIdx].name) : '—';
+
+  // 曲名・カウントダウンはtriggerNextSongで既に設定済み
+  // ステータスをPLAYINGに戻す（tickでも更新されるが即時反映のため）
+  document.getElementById('statusDot').className   = 'status-dot on';
+  document.getElementById('statusText').textContent = 'PLAYING';
+
+  // slotEndTime（次のカウント0）まで待ってtriggerNextSong
+  clearTimeout(fadeTimer);
+  fadeTimer = setTimeout(() => {
+    if (isPlaying && !isFading && !isFullPlay) triggerNextSong();
+  }, Math.max(100, slotEndTime - Date.now()));
+}
+
+// ════════════════════════════════════════════════════════
+//  SKIP (クロスフェードで切り替え)
+// ════════════════════════════════════════════════════════
+function skipTrack() {
+  if (!isPlaying) return;
+  if (isFading) return; // すでにクロスフェード中は無視
+
+  isFullPlay = false;
+  clearTimeout(fadeTimer);
+  clearInterval(xfadeTimer);
+  clearInterval(tickTimer);
+  updateFullBtn();
+
+  // アクティブスロットのゲインを確実に1にリセット（フェードイン途中でも対応）
+  setSlotGain(activeSlot, 1);
+
+  // 次曲をランダムに決定
+  nextIdx = randIdx(currentIdx);
+  const nextFile = files[nextIdx];
+  if (nextFile) setUIPlaying(nextFile.name, true);
+
+  // クロスフェード(fadeDuration)＋ソロ再生(playDuration)の合計でタイマー設定
+  slotEndTime = Date.now() + (fadeDuration + playDuration) * 1000;
+  startCountdown(fadeDuration + playDuration);
+  startCrossfade();
+}
+
+// ════════════════════════════════════════════════════════
+//  COUNTDOWN (ノーマルモード) ― 合計時間からカウント
+// ════════════════════════════════════════════════════════
+function startCountdown(totalSec) {
+  clearInterval(tickTimer);
+  slotEndTime = Date.now() + totalSec * 1000;
+
+  function tick() {
+    if (isFullPlay) { clearInterval(tickTimer); return; }
+    const rem = Math.max(0, (slotEndTime - Date.now()) / 1000);
+    const pct = ((totalSec - rem) / totalSec) * 100;
+
+    document.getElementById('countdown').textContent = rem.toFixed(1);
+    document.getElementById('progressFill').style.width = pct + '%';
+    document.getElementById('progressFill').classList.remove('full-mode');
+
+    // クロスフェード中かどうかで表示を切り替え
+    if (isFading) {
+      document.getElementById('countdown').classList.add('fading');
+      document.getElementById('countdown').classList.remove('full');
+      document.getElementById('statusDot').className   = 'status-dot xfade';
+      document.getElementById('statusText').textContent = 'CROSSFADING...';
+      document.getElementById('pillPlay').classList.remove('active');
+      document.getElementById('pillFade').classList.add('fading-pill');
+    } else {
+      document.getElementById('countdown').classList.remove('fading', 'full');
+      document.getElementById('pillPlay').classList.add('active');
+      document.getElementById('pillFade').classList.remove('fading-pill');
+    }
+
+    if (rem <= 0) clearInterval(tickTimer);
+  }
+  tick();
+  tickTimer = setInterval(tick, 80);
+}
+
+// ════════════════════════════════════════════════════════
+//  UI HELPERS
+// ════════════════════════════════════════════════════════
+// addHistory: true=履歴に追加、false=タイトル更新のみ
+function setUIPlaying(title, addHistoryFlag = true) {
+  const el = document.getElementById('npTitle');
+  el.textContent = stripExt(title);
+  el.classList.remove('idle');
+
+  if (addHistoryFlag) addToHistory(title);
+
+  if (!isFullPlay) {
+    document.getElementById('statusDot').className   = 'status-dot on';
+    document.getElementById('statusText').textContent = 'PLAYING';
+    document.getElementById('pillPlay').classList.add('active');
+    document.getElementById('pillFade').classList.remove('fading-pill');
+    document.getElementById('pillFull').classList.remove('full-pill');
+  }
+}
+
+function setUIFading() {
+  document.getElementById('statusDot').className   = 'status-dot xfade';
+  document.getElementById('statusText').textContent = 'CROSSFADING...';
+}
+
+function setUIFullPlay() {
+  document.getElementById('statusDot').className   = 'status-dot full';
+  document.getElementById('statusText').textContent = 'FULL PLAY';
+  document.getElementById('pillPlay').classList.remove('active');
+  document.getElementById('pillFade').classList.remove('fading-pill');
+  document.getElementById('pillFull').classList.add('full-pill');
+  document.getElementById('countdown').classList.remove('fading');
+  document.getElementById('countdown').classList.add('full');
+  document.getElementById('progressFill').classList.add('full-mode');
+}
+
+function setUIIdle() {
+  const el = document.getElementById('npTitle');
+  el.textContent = '— フォルダを選択して再生を開始してください —';
+  el.classList.add('idle');
+
+  document.getElementById('countdown').textContent    = '--.-';
+  document.getElementById('countdown').classList.remove('fading', 'full');
+  document.getElementById('progressFill').style.width = '0%';
+  document.getElementById('progressFill').classList.remove('full-mode');
+  document.getElementById('nextTitle').textContent     = '—';
+  document.getElementById('statusDot').className       = 'status-dot';
+  document.getElementById('statusText').textContent    = 'STOPPED';
+  document.getElementById('pillPlay').classList.remove('active');
+  document.getElementById('pillFade').classList.remove('fading-pill');
+  document.getElementById('pillFull').classList.remove('full-pill');
+}
+
+// ════════════════════════════════════════════════════════
+//  KEYBOARD SHORTCUTS
+// ════════════════════════════════════════════════════════
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return; // スライダー操作中は無視
+  switch (e.code) {
+    case 'Space':
+      e.preventDefault();
+      if (!document.getElementById('btnPlay').disabled) togglePlay();
+      break;
+    case 'ArrowRight':
+      e.preventDefault();
+      if (!document.getElementById('btnSkip').disabled) skipTrack();
+      break;
+    case 'KeyF':
+      if (!document.getElementById('btnFull').disabled) toggleFullPlay();
+      break;
+  }
+});
+
+// ════════════════════════════════════════════════════════
+//  BOOT
+// ════════════════════════════════════════════════════════
+// LocalStorageから前回の設定を復元してスライダーに反映
+(function loadSavedSettings() {
+  const savedPlay = localStorage.getItem('jukebox_play');
+  const savedFade = localStorage.getItem('jukebox_fade');
+  const savedVol  = localStorage.getItem('jukebox_vol');
+  if (savedPlay !== null) document.getElementById('sliderPlay').value = savedPlay;
+  if (savedFade !== null) document.getElementById('sliderFade').value = savedFade;
+  if (savedVol  !== null) document.getElementById('sliderVol').value  = savedVol;
+})();
+
+onSettingChange();
+onVolumeChange();
+tryRestoreFolder();
+</script>
+</body>
+</html>
