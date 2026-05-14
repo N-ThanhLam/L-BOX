@@ -606,6 +606,56 @@ input[type=range]::-moz-range-thumb {
 
 /* hidden input */
 #folderInput { display: none; }
+
+/* ─── MOBILE RESPONSIVE ─── */
+@media (max-width: 520px) {
+  body { padding: 8px; }
+
+  .header { padding: 14px 16px 12px; gap: 10px; }
+  .header h1 { font-size: 28px; letter-spacing: 8px; }
+  .header-sub { font-size: 9px; letter-spacing: 3px; }
+  .vinyl { width: 52px; height: 52px; }
+
+  .now-playing { padding: 12px 16px; }
+  .np-title { font-size: 15px; }
+  .countdown-display { font-size: 22px; min-width: 54px; }
+
+  .phase-label { font-size: 8px; gap: 4px; flex-wrap: wrap; }
+  .phase-pill { font-size: 8px; padding: 1px 5px; }
+
+  .status-bar { padding: 6px 16px; }
+
+  .controls {
+    grid-template-columns: 1fr 1fr;
+    padding: 12px 16px;
+    gap: 8px;
+  }
+  .controls .btn:nth-child(2) { grid-column: 1 / -1; }
+  .btn { padding: 12px 6px; font-size: 10px; letter-spacing: 1px; }
+  .btn.primary { font-size: 12px; }
+  .btn.full-btn { grid-column: 1 / -1; }
+
+  #restoreBanner { padding: 10px 16px; flex-wrap: wrap; gap: 8px; }
+  #restoreBtn { padding: 8px 12px; font-size: 11px; }
+
+  .settings { padding: 12px 16px; }
+  .setting-row { gap: 8px; }
+  .setting-label { width: 86px; font-size: 9px; }
+  .setting-val { font-size: 11px; min-width: 28px; }
+  .wobble-val-wrap { min-width: 48px; }
+
+  .history-wrap { padding: 8px 16px 4px; }
+  .filelist-wrap { padding: 8px 16px 12px; }
+
+  .footer {
+    padding: 8px 16px;
+    font-size: 8px;
+    flex-direction: column;
+    gap: 2px;
+    align-items: flex-start;
+  }
+  .kbd-hint { display: none; }
+}
 </style>
 </head>
 <body>
@@ -1490,6 +1540,49 @@ function randIdx(exclude = -1) {
 }
 
 // ════════════════════════════════════════════════════════
+//  MEDIA SESSION API（ロック画面・通知センターの再生制御）
+// ════════════════════════════════════════════════════════
+(function setupMediaSession() {
+  if (!('mediaSession' in navigator)) return;
+
+  navigator.mediaSession.setActionHandler('play', () => {
+    if (!isPlaying && !document.getElementById('btnPlay').disabled) togglePlay();
+  });
+  navigator.mediaSession.setActionHandler('pause', () => {
+    if (isPlaying) stopAll();
+  });
+  navigator.mediaSession.setActionHandler('stop', () => {
+    if (isPlaying) stopAll();
+  });
+  navigator.mediaSession.setActionHandler('nexttrack', () => {
+    if (isPlaying && !document.getElementById('btnSkip').disabled) skipTrack();
+  });
+  // previoustrack は未対応なので null で明示的に無効化
+  try { navigator.mediaSession.setActionHandler('previoustrack', null); } catch(_) {}
+})();
+
+function updateMediaSessionPlaying(title) {
+  if (!('mediaSession' in navigator)) return;
+  navigator.mediaSession.playbackState = 'playing';
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: title ? stripExt(title) : 'L-BOX',
+    artist: 'Random Jukebox',
+    album: 'L-BOX'
+  });
+}
+
+function updateMediaSessionPaused() {
+  if (!('mediaSession' in navigator)) return;
+  navigator.mediaSession.playbackState = 'paused';
+}
+
+function updateMediaSessionNone() {
+  if (!('mediaSession' in navigator)) return;
+  navigator.mediaSession.playbackState = 'none';
+  navigator.mediaSession.metadata = null;
+}
+
+// ════════════════════════════════════════════════════════
 //  PLAY / STOP
 // ════════════════════════════════════════════════════════
 async function togglePlay() {
@@ -1577,6 +1670,7 @@ function stopAll() {
 
   setUIIdle();
   document.getElementById('vinyl').classList.remove('spinning');
+  updateMediaSessionNone();
 }
 
 // ════════════════════════════════════════════════════════
@@ -2186,6 +2280,8 @@ function setUIPlaying(title, addHistoryFlag = true) {
 
   if (addHistoryFlag) addToHistory(title);
 
+  updateMediaSessionPlaying(title);
+
   if (!isFullPlay) {
     document.getElementById('statusDot').className   = 'status-dot on';
     document.getElementById('statusText').textContent = 'PLAYING';
@@ -2210,6 +2306,9 @@ function setUIFullPlay() {
   document.getElementById('countdown').classList.add('full');
   document.getElementById('progressFill').classList.add('full-mode');
   document.getElementById('nextTitle').textContent = '— フルで再生中 —';
+  // フルモード時もMedia Sessionを更新
+  const currentFile = files[currentIdx];
+  if (currentFile) updateMediaSessionPlaying(currentFile.name);
 }
 
 function setUIIdle() {
