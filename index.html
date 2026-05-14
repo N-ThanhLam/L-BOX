@@ -4,42 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>L-BOX</title>
-<meta name="description" content="L-BOX — Random Music Player with crossfade">
-<meta name="theme-color" content="#00e5cc">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="L-BOX">
-<link rel="manifest" id="pwaManifest">
-<link rel="apple-touch-icon" id="pwaAppleIcon">
-<script>
-// manifest を DOMContentLoaded より前に Blob で登録
-// ※ Blob URL は Android Chrome の beforeinstallprompt を妨げるため
-//    Data URI 文字列で manifest href を設定する
-(function(){
-  const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="80" fill="#000d0f"/><circle cx="256" cy="256" r="200" fill="none" stroke="#004a48" stroke-width="16"/><circle cx="256" cy="256" r="160" fill="#001a18"/><circle cx="256" cy="256" r="80" fill="#002a28"/><circle cx="256" cy="256" r="20" fill="#00e5cc"/><text x="256" y="148" font-family="Georgia,serif" font-size="72" font-weight="bold" fill="#00e5cc" text-anchor="middle" letter-spacing="4">L</text><text x="256" y="420" font-family="Courier New,monospace" font-size="28" fill="#008a80" text-anchor="middle" letter-spacing="8">BOX</text></svg>`;
-  const svgB64 = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgIcon)));
-  window._pwaIconB64 = svgB64;
-
-  const manifest = {
-    name: 'L-BOX Random Music Player',
-    short_name: 'L-BOX',
-    description: 'クロスフェード付きランダム音楽プレイヤー',
-    start_url: './',
-    display: 'standalone',
-    orientation: 'portrait-primary',
-    background_color: '#000d0f',
-    theme_color: '#00e5cc',
-    icons: [
-      { src: svgB64, sizes: '512x512', type: 'image/svg+xml', purpose: 'any maskable' },
-      { src: svgB64, sizes: '192x192', type: 'image/svg+xml' }
-    ]
-  };
-  const blob = new Blob([JSON.stringify(manifest)], {type:'application/manifest+json'});
-  document.getElementById('pwaManifest').href = URL.createObjectURL(blob);
-  document.getElementById('pwaAppleIcon').href = svgB64;
-})();
-</script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -156,27 +120,6 @@ body {
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ─── VISUALIZER ─── */
-.viz-wrap {
-  background: var(--bg);
-  border-bottom: 1px solid var(--amber-lo);
-  padding: 0 0 2px;
-  position: relative;
-}
-canvas#viz {
-  display: block;
-  width: 100%;
-  height: 70px;
-  image-rendering: pixelated;
-}
-.viz-overlay {
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(to right, var(--bg) 0%, transparent 5%, transparent 95%, var(--bg) 100%);
-  pointer-events: none;
-}
-
 /* ─── NOW PLAYING ─── */
 .now-playing {
   padding: 18px 28px;
@@ -207,7 +150,6 @@ canvas#viz {
 .progress-row {
   display: flex;
   align-items: center;
-  gap: 14px;
   margin-top: 10px;
 }
 
@@ -231,19 +173,6 @@ canvas#viz {
   background: linear-gradient(to right, #1a8f50, var(--green), #a0ffcc);
   box-shadow: 0 0 6px var(--green-glow);
 }
-
-.countdown-display {
-  font-size: 30px;
-  color: var(--amber);
-  min-width: 70px;
-  text-align: right;
-  letter-spacing: 2px;
-  font-variant-numeric: tabular-nums;
-  text-shadow: 0 0 10px var(--neon-glow);
-  transition: color 0.3s;
-}
-.countdown-display.fading { color: var(--neon); }
-.countdown-display.full  { color: var(--green); text-shadow: 0 0 10px var(--green-glow); }
 
 .phase-label {
   font-size: 9px;
@@ -492,21 +421,8 @@ canvas#viz {
   font-size: 10px;
   color: var(--cream);
   letter-spacing: 1px;
-  width: 110px;
+  width: 130px;
   flex-shrink: 0;
-}
-
-@media (max-width: 400px) {
-  .setting-label { width: 80px; letter-spacing: 0; }
-  .header h1 { font-size: 34px; letter-spacing: 12px; }
-  .controls { grid-template-columns: 1fr 1fr; padding: 14px 16px; }
-  .btn.primary { grid-column: 1 / -1; }
-  .btn.full-btn { grid-column: 1 / -1; }
-  .now-playing, .settings, .status-bar { padding-left: 16px; padding-right: 16px; }
-  .filelist-wrap { padding-left: 16px; padding-right: 16px; }
-  .history-wrap { padding-left: 16px; padding-right: 16px; }
-  .footer { padding-left: 16px; padding-right: 16px; flex-wrap: wrap; gap: 4px; }
-  .kbd-hint { display: none; }
 }
 
 input[type=range] {
@@ -547,40 +463,6 @@ input[type=range]::-moz-range-thumb {
 #sliderWobble::-webkit-slider-thumb { background: #ffe0a0; box-shadow: 0 0 10px rgba(255,210,100,0.7); }
 #sliderWobble::-moz-range-thumb     { background: #ffe0a0; box-shadow: 0 0 10px rgba(255,210,100,0.7); }
 #sliderWobble { background: linear-gradient(to right, var(--amber-lo), rgba(255,210,100,0.25)); }
-
-/* ─── VIZ TOGGLE ─── */
-.viz-toggle-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 10px;
-}
-.toggle-switch {
-  position: relative;
-  width: 36px;
-  height: 20px;
-  flex-shrink: 0;
-}
-.toggle-switch input { opacity: 0; width: 0; height: 0; }
-.toggle-slider {
-  position: absolute;
-  inset: 0;
-  background: var(--amber-lo);
-  border-radius: 20px;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-.toggle-slider::before {
-  content: '';
-  position: absolute;
-  width: 14px; height: 14px;
-  left: 3px; top: 3px;
-  background: var(--dim);
-  border-radius: 50%;
-  transition: transform 0.2s, background 0.2s;
-}
-.toggle-switch input:checked + .toggle-slider { background: rgba(0,229,204,0.2); border: 1px solid var(--amber-dim); }
-.toggle-switch input:checked + .toggle-slider::before { transform: translateX(16px); background: var(--amber); box-shadow: 0 0 6px var(--neon-glow); }
 
 .wobble-val-wrap {
   display: flex;
@@ -690,88 +572,31 @@ input[type=range]::-moz-range-thumb {
 /* hidden input */
 #folderInput { display: none; }
 
-/* ─── PWA INSTALL BUTTON ─── */
-#pwaInstallBtn {
-  display: none;
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  padding: 10px 18px;
-  background: var(--amber);
-  color: var(--bg);
-  border: none;
-  border-radius: 8px;
-  font-family: 'Courier New', monospace;
-  font-size: 11px;
-  font-weight: bold;
-  letter-spacing: 2px;
-  cursor: pointer;
-  box-shadow: 0 0 20px rgba(0,229,204,0.5);
-  z-index: 9999;
-  transition: all 0.2s;
-  text-transform: uppercase;
-}
-#pwaInstallBtn:hover {
-  background: var(--neon);
-  box-shadow: 0 0 30px var(--neon-glow);
-}
-#pwaInstallBtn.hidden { display: none !important; }
-
-/* ─── iOS インストールバナー ─── */
-#iosInstallBanner {
-  position: fixed;
-  bottom: 0; left: 0; right: 0;
-  background: var(--panel2);
-  border-top: 2px solid var(--amber-dim);
-  padding: 14px 18px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  z-index: 9999;
-  box-shadow: 0 -4px 24px rgba(0,229,204,0.15);
-}
-#iosInstallIcon { font-size: 24px; flex-shrink: 0; }
-#iosInstallText { flex: 1; }
-#iosInstallTitle {
-  font-size: 11px;
-  color: var(--amber);
-  letter-spacing: 2px;
-  margin-bottom: 3px;
-  text-transform: uppercase;
-}
-#iosInstallSub {
-  font-size: 10px;
-  color: var(--dim);
-  letter-spacing: 0.5px;
-  line-height: 1.5;
-}
-#iosInstallSub strong { color: var(--cream); }
-#iosInstallClose {
-  background: none;
-  border: 1px solid var(--dim2);
-  color: var(--dim);
-  border-radius: 50%;
-  width: 24px; height: 24px;
-  font-size: 11px;
-  cursor: pointer;
-  flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  padding: 0;
+/* ─── MOBILE ─── */
+@media (max-width: 480px) {
+  .header { padding: 16px 18px 14px; }
+  .header h1 { font-size: 32px; letter-spacing: 12px; }
+  .now-playing, .controls, .settings,
+  .status-bar, .history-wrap, .filelist-wrap, .footer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  #restoreBanner { padding: 12px 16px; }
+  .setting-label {
+    width: 82px;
+    font-size: 9px;
+    letter-spacing: 0.5px;
+  }
+  .setting-val {
+    min-width: 34px;
+    font-size: 11px;
+  }
+  .wobble-val-wrap { min-width: 48px; }
+  .wobble-mode { font-size: 8px; letter-spacing: 1px; }
 }
 </style>
 </head>
 <body>
-<button id="pwaInstallBtn">📲 ホーム画面に追加</button>
-
-<!-- iOS Safari 用インストール案内バナー -->
-<div id="iosInstallBanner" style="display:none">
-  <span id="iosInstallIcon">📲</span>
-  <div id="iosInstallText">
-    <div id="iosInstallTitle">ホーム画面に追加できます</div>
-    <div id="iosInstallSub">Safari の <strong>共有ボタン</strong> →「ホーム画面に追加」</div>
-  </div>
-  <button id="iosInstallClose" onclick="document.getElementById('iosInstallBanner').style.display='none'">✕</button>
-</div>
 
 <div class="jukebox">
 
@@ -784,12 +609,6 @@ input[type=range]::-moz-range-thumb {
     <div class="vinyl" id="vinyl"></div>
   </div>
 
-  <!-- VISUALIZER -->
-  <div class="viz-wrap">
-    <canvas id="viz"></canvas>
-    <div class="viz-overlay"></div>
-  </div>
-
   <!-- NOW PLAYING -->
   <div class="now-playing">
     <div class="np-label">▶ NOW PLAYING</div>
@@ -799,7 +618,6 @@ input[type=range]::-moz-range-thumb {
       <div class="progress-bg">
         <div class="progress-fill" id="progressFill"></div>
       </div>
-      <div class="countdown-display" id="countdown">--.-</div>
     </div>
 
     <div class="phase-label">
@@ -869,14 +687,6 @@ input[type=range]::-moz-range-thumb {
         <div class="setting-val wobble-val" id="valWobble">0</div>
         <div class="wobble-mode" id="wobbleMode">— OFF —</div>
       </div>
-    </div>
-    <div class="viz-toggle-row">
-      <div class="setting-label">ビジュアライザー</div>
-      <label class="toggle-switch">
-        <input type="checkbox" id="vizToggle" checked onchange="onVizToggle()">
-        <span class="toggle-slider"></span>
-      </label>
-      <div class="setting-val" id="vizToggleLabel" style="font-size:10px;color:var(--amber-dim);letter-spacing:1px;">ON</div>
     </div>
   </div>
 
@@ -1038,8 +848,6 @@ function initAudioContext() {
     gainB = actx.createGain(); gainB.gain.value = 0;
 
     analyser = actx.createAnalyser();
-    analyser.fftSize = 256;
-    analyser.smoothingTimeConstant = 0.82;
 
     masterGain = actx.createGain();
     masterGain.gain.value = masterVolume;
@@ -1166,99 +974,6 @@ function applyMasterVolume() {
 }
 
 // ════════════════════════════════════════════════════════
-//  CANVAS VISUALIZER
-// ════════════════════════════════════════════════════════
-const canvas = document.getElementById('viz');
-const ctx2d  = canvas.getContext('2d');
-
-function resizeCanvas() {
-  const rect = canvas.getBoundingClientRect();
-  const dpr  = window.devicePixelRatio || 1;
-  canvas.width  = Math.round(rect.width  * dpr);
-  canvas.height = Math.round(rect.height * dpr);
-}
-window.addEventListener('resize', resizeCanvas);
-resizeCanvas();
-
-let freqData = null;
-let vizEnabled = true;     // ビジュアライザー ON/OFF フラグ
-let vizRafId  = null;      // requestAnimationFrame の ID
-
-function vizLoop() {
-  if (!vizEnabled) {
-    vizRafId = null;
-    return;                // OFF なら止める
-  }
-  vizRafId = requestAnimationFrame(vizLoop);
-  const W = canvas.width, H = canvas.height;
-  ctx2d.clearRect(0, 0, W, H);
-
-  if (analyser && isPlaying) {
-    if (!freqData) freqData = new Uint8Array(analyser.frequencyBinCount);
-    analyser.getByteFrequencyData(freqData);
-    const bins = freqData.length;
-    const bw   = Math.max(1, Math.floor(W / bins));
-    const gap  = Math.max(0, Math.floor(bw * 0.15));
-
-    for (let i = 0; i < bins; i++) {
-      const v  = freqData[i] / 255;
-      const bh = Math.max(2, v * H);
-      const x  = Math.floor(i * (W / bins));
-      const g  = ctx2d.createLinearGradient(0, H, 0, H - bh);
-      if (isFullPlay) {
-        g.addColorStop(0,   'rgba(20,120,60,0.9)');
-        g.addColorStop(0.5, 'rgba(61,255,143,0.95)');
-        g.addColorStop(1,   'rgba(160,255,200,1)');
-      } else {
-        g.addColorStop(0,   'rgba(0,100,120,0.9)');
-        g.addColorStop(0.5, 'rgba(0,229,204,0.95)');
-        g.addColorStop(1,   'rgba(0,255,238,1)');
-      }
-      ctx2d.fillStyle = g;
-      ctx2d.fillRect(x + gap/2, H - bh, bw - gap, bh);
-      if (v > 0.05) {
-        ctx2d.fillStyle = isFullPlay ? 'rgba(180,255,240,0.6)' : 'rgba(120,255,245,0.6)';
-        ctx2d.fillRect(x + gap/2, H - bh - 2, bw - gap, 2);
-      }
-    }
-  } else {
-    const t = Date.now() / 1000;
-    const n = 40;
-    const bw = W / n;
-    for (let i = 0; i < n; i++) {
-      const wave  = (Math.sin(t * 0.6 + i * 0.42) * 0.5 + 0.5);
-      const bh    = wave * 12 + 2;
-      const alpha = wave * 0.15 + 0.04;
-      ctx2d.fillStyle = `rgba(0,229,204,${alpha})`;
-      ctx2d.fillRect(i * bw + 1, H - bh, bw - 2, bh);
-    }
-  }
-}
-vizRafId = requestAnimationFrame(vizLoop);   // 初回起動
-
-function onVizToggle() {
-  vizEnabled = document.getElementById('vizToggle').checked;
-  const label = document.getElementById('vizToggleLabel');
-  const wrap  = document.querySelector('.viz-wrap');
-
-  if (vizEnabled) {
-    label.textContent = 'ON';
-    label.style.color = 'var(--amber-dim)';
-    wrap.style.display = '';
-    // ループが止まっていたら再起動
-    if (!vizRafId) vizRafId = requestAnimationFrame(vizLoop);
-  } else {
-    label.textContent = 'OFF';
-    label.style.color = 'var(--dim2)';
-    // canvas を黒でクリアしてから非表示
-    ctx2d.clearRect(0, 0, canvas.width, canvas.height);
-    wrap.style.display = 'none';
-    // vizLoop 内で vizRafId = null になり自然に止まる
-  }
-  localStorage.setItem('jukebox_viz', vizEnabled ? '1' : '0');
-}
-
-// ════════════════════════════════════════════════════════
 //  INDEXEDDB — フォルダハンドル永続化
 // ════════════════════════════════════════════════════════
 const IDB_NAME = 'jukeboxDB', IDB_STORE = 'kv';
@@ -1329,7 +1044,6 @@ document.getElementById('folderInput').addEventListener('change', function(e) {
     const folderName = e.target.files[0].webkitRelativePath.split('/')[0] || 'フォルダ';
     localStorage.setItem('lastFolderName', folderName);
     updateFolderBtn(folderName);
-    updateRestoreBtn(folderName);
   }
 });
 
@@ -1371,7 +1085,6 @@ function showBanner(folderName, onRestoreClick) {
 
 async function tryRestoreFolder() {
   const savedName = localStorage.getItem('lastFolderName');
-  updateRestoreBtn(savedName);
 
   if (!window.showDirectoryPicker) return;
   try {
@@ -1395,19 +1108,6 @@ async function tryRestoreFolder() {
     }
   } catch(e) {
     console.log('Folder restore error:', e);
-  }
-}
-
-function updateRestoreBtn(name) {
-  const btn = document.getElementById('btnRestore');
-  if (!btn) return;
-  if (name) {
-    const short = name.length > 16 ? name.slice(0, 16) + '…' : name;
-    btn.textContent = `↩ 前回:「${short}」を再読み込み`;
-    btn.style.opacity = '1';
-  } else {
-    btn.textContent = '↩ 前回のフォルダを再読み込み';
-    btn.style.opacity = '0.45';
   }
 }
 
@@ -1908,7 +1608,6 @@ function startFullCountdown() {
     const total = isFinite(audio.duration) ? audio.duration : 1;
     const pct   = total > 0 ? ((total - rem) / total) * 100 : 0;
 
-    document.getElementById('countdown').textContent = rem.toFixed(1);
     document.getElementById('progressFill').style.width = pct + '%';
 
     if (rem <= 0) clearInterval(tickTimer);
@@ -2351,20 +2050,16 @@ function startCountdown(totalSec, anchorEndTime) {
     const spanSec  = elapsed + rem;                    // 現時点で見える全体幅
     const pct      = spanSec > 0 ? (elapsed / spanSec) * 100 : 0;
 
-    document.getElementById('countdown').textContent = rem.toFixed(1);
     document.getElementById('progressFill').style.width = pct + '%';
     document.getElementById('progressFill').classList.remove('full-mode');
 
     // クロスフェード中かどうかで表示を切り替え
     if (isFading) {
-      document.getElementById('countdown').classList.add('fading');
-      document.getElementById('countdown').classList.remove('full');
       document.getElementById('statusDot').className   = 'status-dot xfade';
       document.getElementById('statusText').textContent = 'CROSSFADING...';
       document.getElementById('pillPlay').classList.remove('active');
       document.getElementById('pillFade').classList.add('fading-pill');
     } else {
-      document.getElementById('countdown').classList.remove('fading', 'full');
       document.getElementById('pillPlay').classList.add('active');
       document.getElementById('pillFade').classList.remove('fading-pill');
     }
@@ -2406,8 +2101,6 @@ function setUIFullPlay() {
   document.getElementById('pillPlay').classList.remove('active');
   document.getElementById('pillFade').classList.remove('fading-pill');
   document.getElementById('pillFull').classList.add('full-pill');
-  document.getElementById('countdown').classList.remove('fading');
-  document.getElementById('countdown').classList.add('full');
   document.getElementById('progressFill').classList.add('full-mode');
   document.getElementById('nextTitle').textContent = '— フルで再生中 —';
 }
@@ -2417,8 +2110,6 @@ function setUIIdle() {
   el.textContent = '— フォルダを選択して再生を開始してください —';
   el.classList.add('idle');
 
-  document.getElementById('countdown').textContent    = '--.-';
-  document.getElementById('countdown').classList.remove('fading', 'full');
   document.getElementById('progressFill').style.width = '0%';
   document.getElementById('progressFill').classList.remove('full-mode');
   document.getElementById('nextTitle').textContent     = '—';
@@ -2567,95 +2258,16 @@ document.addEventListener('keyup', e => {
   const savedFade   = localStorage.getItem('jukebox_fade');
   const savedVol    = localStorage.getItem('jukebox_vol');
   const savedWobble = localStorage.getItem('jukebox_wobble');
-  const savedViz    = localStorage.getItem('jukebox_viz');
   if (savedPlay   !== null) document.getElementById('sliderPlay').value   = savedPlay;
   if (savedFade   !== null) document.getElementById('sliderFade').value   = savedFade;
   if (savedVol    !== null) document.getElementById('sliderVol').value    = savedVol;
   if (savedWobble !== null) document.getElementById('sliderWobble').value = savedWobble;
-  if (savedViz === '0') {
-    document.getElementById('vizToggle').checked = false;
-    onVizToggle();
-  }
 })();
 
 onSettingChange();
 onVolumeChange();
 onWobbleChange();
 tryRestoreFolder();
-
-// ════════════════════════════════════════════════════════
-//  PWA SETUP — Service Worker + Install prompt
-// ════════════════════════════════════════════════════════
-(function initPWA() {
-
-  // ── Service Worker をインラインで生成・登録 ──
-  const swCode = `
-const CACHE = 'lbox-v1';
-self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(['./'])));
-  self.skipWaiting();
-});
-self.addEventListener('activate', e => {
-  e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-    )
-  );
-  self.clients.claim();
-});
-self.addEventListener('fetch', e => {
-  if (e.request.url.startsWith('blob:')) return;
-  e.respondWith(
-    caches.match(e.request).then(r => r || fetch(e.request).catch(() => caches.match('./')))
-  );
-});
-`;
-  if ('serviceWorker' in navigator) {
-    const swBlob = new Blob([swCode], { type: 'application/javascript' });
-    const swURL  = URL.createObjectURL(swBlob);
-    navigator.serviceWorker.register(swURL, { scope: './' })
-      .then(reg => console.log('[PWA] SW registered', reg.scope))
-      .catch(err => console.warn('[PWA] SW failed:', err));
-  }
-
-  // ── Android: beforeinstallprompt ──
-  let deferredPrompt = null;
-  const installBtn = document.getElementById('pwaInstallBtn');
-
-  window.addEventListener('beforeinstallprompt', e => {
-    e.preventDefault();
-    deferredPrompt = e;
-    installBtn.style.display = 'block';
-    console.log('[PWA] beforeinstallprompt fired');
-  });
-
-  installBtn.addEventListener('click', async () => {
-    if (!deferredPrompt) return;
-    installBtn.style.display = 'none';
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    console.log('[PWA] outcome:', outcome);
-    deferredPrompt = null;
-  });
-
-  window.addEventListener('appinstalled', () => {
-    installBtn.style.display = 'none';
-    const iosBanner = document.getElementById('iosInstallBanner');
-    if (iosBanner) iosBanner.style.display = 'none';
-    deferredPrompt = null;
-  });
-
-  // ── iOS Safari: 手動インストール案内バナー ──
-  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-  const isInStandalone = window.navigator.standalone === true ||
-    window.matchMedia('(display-mode: standalone)').matches;
-
-  if (isIOS && !isInStandalone) {
-    const banner = document.getElementById('iosInstallBanner');
-    if (banner) banner.style.display = 'flex';
-  }
-
-})();
 </script>
 </body>
 </html>
