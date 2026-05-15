@@ -150,6 +150,7 @@ body {
 .progress-row {
   display: flex;
   align-items: center;
+  gap: 14px;
   margin-top: 10px;
 }
 
@@ -173,6 +174,19 @@ body {
   background: linear-gradient(to right, #1a8f50, var(--green), #a0ffcc);
   box-shadow: 0 0 6px var(--green-glow);
 }
+
+.countdown-display {
+  font-size: 30px;
+  color: var(--amber);
+  min-width: 70px;
+  text-align: right;
+  letter-spacing: 2px;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 10px var(--neon-glow);
+  transition: color 0.3s;
+}
+.countdown-display.fading { color: var(--neon); }
+.countdown-display.full  { color: var(--green); text-shadow: 0 0 10px var(--green-glow); }
 
 .phase-label {
   font-size: 9px;
@@ -618,6 +632,7 @@ input[type=range]::-moz-range-thumb {
       <div class="progress-bg">
         <div class="progress-fill" id="progressFill"></div>
       </div>
+      <div class="countdown-display" id="countdown">--.-</div>
     </div>
 
     <div class="phase-label">
@@ -848,6 +863,8 @@ function initAudioContext() {
     gainB = actx.createGain(); gainB.gain.value = 0;
 
     analyser = actx.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.82;
 
     masterGain = actx.createGain();
     masterGain.gain.value = masterVolume;
@@ -1044,6 +1061,7 @@ document.getElementById('folderInput').addEventListener('change', function(e) {
     const folderName = e.target.files[0].webkitRelativePath.split('/')[0] || 'フォルダ';
     localStorage.setItem('lastFolderName', folderName);
     updateFolderBtn(folderName);
+    updateRestoreBtn(folderName);
   }
 });
 
@@ -1085,6 +1103,7 @@ function showBanner(folderName, onRestoreClick) {
 
 async function tryRestoreFolder() {
   const savedName = localStorage.getItem('lastFolderName');
+  updateRestoreBtn(savedName);
 
   if (!window.showDirectoryPicker) return;
   try {
@@ -1108,6 +1127,19 @@ async function tryRestoreFolder() {
     }
   } catch(e) {
     console.log('Folder restore error:', e);
+  }
+}
+
+function updateRestoreBtn(name) {
+  const btn = document.getElementById('btnRestore');
+  if (!btn) return;
+  if (name) {
+    const short = name.length > 16 ? name.slice(0, 16) + '…' : name;
+    btn.textContent = `↩ 前回:「${short}」を再読み込み`;
+    btn.style.opacity = '1';
+  } else {
+    btn.textContent = '↩ 前回のフォルダを再読み込み';
+    btn.style.opacity = '0.45';
   }
 }
 
@@ -1608,6 +1640,7 @@ function startFullCountdown() {
     const total = isFinite(audio.duration) ? audio.duration : 1;
     const pct   = total > 0 ? ((total - rem) / total) * 100 : 0;
 
+    document.getElementById('countdown').textContent = rem.toFixed(1);
     document.getElementById('progressFill').style.width = pct + '%';
 
     if (rem <= 0) clearInterval(tickTimer);
@@ -2041,6 +2074,7 @@ function startCountdown(totalSec, anchorEndTime) {
   const startTime = Date.now();
 
   function tick() {
+    if (document.hidden) return;
     if (isFullPlay) { clearInterval(tickTimer); return; }
     const rem     = Math.max(0, (slotEndTime - Date.now()) / 1000);
     // 経過時間をスロット開始から測り、終了時刻との差分で全体幅を動的に求める。
@@ -2050,16 +2084,20 @@ function startCountdown(totalSec, anchorEndTime) {
     const spanSec  = elapsed + rem;                    // 現時点で見える全体幅
     const pct      = spanSec > 0 ? (elapsed / spanSec) * 100 : 0;
 
+    document.getElementById('countdown').textContent = rem.toFixed(1);
     document.getElementById('progressFill').style.width = pct + '%';
     document.getElementById('progressFill').classList.remove('full-mode');
 
     // クロスフェード中かどうかで表示を切り替え
     if (isFading) {
+      document.getElementById('countdown').classList.add('fading');
+      document.getElementById('countdown').classList.remove('full');
       document.getElementById('statusDot').className   = 'status-dot xfade';
       document.getElementById('statusText').textContent = 'CROSSFADING...';
       document.getElementById('pillPlay').classList.remove('active');
       document.getElementById('pillFade').classList.add('fading-pill');
     } else {
+      document.getElementById('countdown').classList.remove('fading', 'full');
       document.getElementById('pillPlay').classList.add('active');
       document.getElementById('pillFade').classList.remove('fading-pill');
     }
@@ -2101,6 +2139,8 @@ function setUIFullPlay() {
   document.getElementById('pillPlay').classList.remove('active');
   document.getElementById('pillFade').classList.remove('fading-pill');
   document.getElementById('pillFull').classList.add('full-pill');
+  document.getElementById('countdown').classList.remove('fading');
+  document.getElementById('countdown').classList.add('full');
   document.getElementById('progressFill').classList.add('full-mode');
   document.getElementById('nextTitle').textContent = '— フルで再生中 —';
 }
@@ -2110,6 +2150,8 @@ function setUIIdle() {
   el.textContent = '— フォルダを選択して再生を開始してください —';
   el.classList.add('idle');
 
+  document.getElementById('countdown').textContent    = '--.-';
+  document.getElementById('countdown').classList.remove('fading', 'full');
   document.getElementById('progressFill').style.width = '0%';
   document.getElementById('progressFill').classList.remove('full-mode');
   document.getElementById('nextTitle').textContent     = '—';
