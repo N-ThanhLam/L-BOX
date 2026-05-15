@@ -3,6 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#00e5cc">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon.svg">
 <title>L-BOX</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -2484,6 +2489,29 @@ onVolumeChange();
 onWobbleChange();
 setupMediaSession();   // ロック画面 / 通知パネルの操作を受け付ける
 tryRestoreFolder();
+
+// ════════════════════════════════════════════════════════
+//  PWA: Service Worker 登録
+//  - https:// か localhost のみ登録（file:// は不可）
+//  - 新バージョン待機中なら SKIP_WAITING を送って即適用
+// ════════════════════════════════════════════════════════
+if ('serviceWorker' in navigator &&
+    (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  navigator.serviceWorker.register('./sw.js')
+    .then(reg => {
+      reg.addEventListener('updatefound', () => {
+        const newSW = reg.installing;
+        if (!newSW) return;
+        newSW.addEventListener('statechange', () => {
+          if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+            // 旧バージョンの SW が動いている = 新バージョン待機中 → 即切替
+            newSW.postMessage('SKIP_WAITING');
+          }
+        });
+      });
+    })
+    .catch(err => console.warn('[L-BOX] SW registration failed:', err));
+}
 </script>
 </body>
 </html>
