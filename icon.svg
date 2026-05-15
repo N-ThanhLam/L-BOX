@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- 背景: アプリのテーマと同じ深いティール -->
+  <rect width="512" height="512" fill="#001518"/>
+
+  <!-- すべてのコンテンツを中央 80% 安全圏内に配置（maskable対応） -->
+  <g transform="translate(256 256)">
+
+    <!-- 外側ハロー（グロー風） -->
+    <circle r="200" fill="none" stroke="#00e5cc" stroke-width="3" opacity="0.18"/>
+    <circle r="190" fill="none" stroke="#00e5cc" stroke-width="2" opacity="0.30"/>
+
+    <!-- レコード本体 -->
+    <circle r="180" fill="#001a18"/>
+    <circle r="180" fill="none" stroke="#00e5cc" stroke-width="2.5" opacity="0.65"/>
+
+    <!-- 溝 -->
+    <circle r="160" fill="none" stroke="#003d40" stroke-width="1"/>
+    <circle r="142" fill="none" stroke="#003d40" stroke-width="1"/>
+    <circle r="124" fill="none" stroke="#003d40" stroke-width="1"/>
+    <circle r="106" fill="none" stroke="#003d40" stroke-width="1"/>
+    <circle r="88"  fill="none" stroke="#003d40" stroke-width="1"/>
+    <circle r="74"  fill="none" stroke="#003d40" stroke-width="1"/>
+
+    <!-- センターレーベル -->
+    <circle r="62" fill="#002830"/>
+    <circle r="62" fill="none" stroke="#00e5cc" stroke-width="1.2" opacity="0.45"/>
+
+    <!-- スピンドル中央 -->
+    <circle r="13" fill="#00e5cc"/>
+    <circle r="13" fill="none" stroke="#00ffee" stroke-width="0.5" opacity="0.8"/>
+
+    <!-- 反射ハイライト（左上） -->
+    <ellipse cx="-60" cy="-90" rx="36" ry="14" fill="#00e5cc" opacity="0.10" transform="rotate(-32)"/>
+  </g>
+</svg>

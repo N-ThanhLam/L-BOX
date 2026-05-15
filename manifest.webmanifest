@@ -1,0 +1,27 @@
+{
+  "name": "L-BOX",
+  "short_name": "L-BOX",
+  "description": "Random Music Player",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#000d0f",
+  "theme_color": "#00e5cc",
+  "lang": "ja",
+  "categories": ["music", "entertainment"],
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "maskable"
+    }
+  ]
+}
