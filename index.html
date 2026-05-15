@@ -1270,6 +1270,8 @@ async function playSpecificTrack(idx) {
     await resumeAudioContext();  // クリック文脈で確実に resume
     isPlaying = true;
     activeSlot = 0;
+    // stopAll() で element.volume が 0 になっている場合に備えて 1.0 に戻す
+    audios.forEach(a => { a.volume = 1.0; });
     document.getElementById('btnPlay').textContent = '⏹ STOP';
     document.getElementById('btnPlay').classList.add('stop-mode');
     document.getElementById('btnSkip').disabled = false;
@@ -1488,6 +1490,8 @@ async function togglePlay() {
   await resumeAudioContext();   // ジェスチャー文脈で確実に resume してから再生
   isPlaying  = true;
   activeSlot = 0;
+  // stopAll() で element.volume が 0 になっている場合に備えて 1.0 に戻す
+  audios.forEach(a => { a.volume = 1.0; });
   setSlotGain(0, 1);
   setSlotGain(1, 0);
   document.getElementById('btnPlay').textContent = '⏹ STOP';
@@ -1540,7 +1544,7 @@ function stopAll() {
   // pause() が slot 0 で投げると slot 1 を含む後続処理が止まる。
   audios.forEach((a, i) => {
     try { a.pause(); } catch (_) {}
-    a.volume = 0;   // WebAudio 未使用フォールバック用も即時消音
+    if (!actx) a.volume = 0;   // WebAudio 未使用フォールバック用のみ消音
     clearSlotSrc(i);
     setSlotGain(i, 0);  // 停止中は両スロット完全消音（次回 togglePlay で再設定）
   });
