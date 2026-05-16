@@ -2,10 +2,12 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#00e5cc">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="format-detection" content="telephone=no">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon.svg">
 <title>L-BOX</title>
@@ -35,13 +37,17 @@ body {
   color: var(--cream);
   font-family: 'Courier New', Courier, monospace;
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   background-image:
     radial-gradient(ellipse 80% 50% at 50% -10%, rgba(0,229,204,0.07) 0%, transparent 70%),
     repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,200,180,0.012) 3px, rgba(0,200,180,0.012) 4px);
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+       text-size-adjust: 100%;
 }
 
 /* ─── JUKEBOX SHELL ─── */
@@ -262,6 +268,12 @@ body {
   transition: all 0.15s;
   outline: none;
   white-space: nowrap;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  min-height: 44px;
 }
 .btn:hover:not(:disabled) {
   border-color: var(--amber);
@@ -473,7 +485,13 @@ input[type=range]::-moz-range-thumb {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  min-width: 64px;
+  /* width 固定 + flex-shrink:0 で、モード文字列の長さ変化により
+     val-wrap が伸縮 → スライダー幅が脈打つバグを防ぐ。
+     "▸ CASSETTE" が最長 (~62px @9px font, ls 2px) なので 80px 確保。 */
+  width: 80px;
+  flex-shrink: 0;
+  /* 2行レイアウトで他行より行高が嵩むので、はみ出した分は overflow せず詰める */
+  overflow: hidden;
 }
 .wobble-mode {
   font-size: 9px;
@@ -482,6 +500,10 @@ input[type=range]::-moz-range-thumb {
   margin-top: 2px;
   text-transform: uppercase;
   white-space: nowrap;
+  /* 万一はみ出しても省略表示で崩れない */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 .setting-val.wobble-val { color: #ffe0a0; }
 
@@ -577,6 +599,148 @@ input[type=range]::-moz-range-thumb {
 /* hidden input */
 #folderInput { display: none; }
 
+/* ─── SLEEP TIMER ─── */
+.sleep-row {
+  flex-wrap: wrap;
+}
+.sleep-buttons {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+.sleep-btn {
+  flex: 1;
+  min-width: 38px;
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 1px solid var(--amber-lo);
+  background: transparent;
+  color: var(--amber-dim);
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  letter-spacing: 1px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s;
+  outline: none;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.sleep-btn.active {
+  border-color: var(--amber);
+  color: var(--amber);
+  background: rgba(0,229,204,0.10);
+  box-shadow: 0 0 10px rgba(0,229,204,0.18);
+}
+.sleep-btn:active { transform: scale(0.95); }
+.setting-val.sleep-val { color: var(--neon); min-width: 50px; font-size: 11px; }
+
+/* ─── VOLUME LABEL (clickable for mute) ─── */
+.vol-label-clickable {
+  cursor: pointer;
+  position: relative;
+  transition: color 0.15s;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.vol-label-clickable::before {
+  content: '🔊 ';
+  font-size: 11px;
+}
+.vol-label-clickable.muted::before { content: '🔇 '; }
+.vol-label-clickable.muted { color: var(--red); }
+
+/* ─── SEARCH ─── */
+.search-wrap {
+  padding: 8px 28px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#searchInput {
+  flex: 1;
+  background: var(--panel3);
+  border: 1px solid var(--amber-lo);
+  color: var(--cream);
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  outline: none;
+  min-height: 36px;
+  letter-spacing: 0.5px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+#searchInput:focus {
+  border-color: var(--amber);
+  box-shadow: 0 0 8px rgba(0,229,204,0.2);
+}
+#searchInput::placeholder { color: var(--dim2); }
+.search-count {
+  font-size: 10px;
+  color: var(--dim);
+  letter-spacing: 1px;
+  min-width: 42px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── TOUCH DEVICES: prevent sticky hover ─── */
+@media (hover: none), (pointer: coarse) {
+  .btn:hover:not(:disabled) {
+    border-color: var(--amber-lo);
+    color: var(--amber-dim);
+    background: transparent;
+    box-shadow: none;
+  }
+  .btn.primary:hover:not(:disabled) {
+    background: var(--amber);
+    border-color: var(--amber);
+    color: var(--bg);
+    box-shadow: 0 0 18px rgba(0,229,204,0.4);
+  }
+  .btn.primary.stop-mode:hover:not(:disabled) {
+    background: transparent;
+    color: var(--red);
+    border-color: var(--red);
+    box-shadow: 0 0 14px rgba(255,68,85,0.2);
+  }
+  .btn.full-btn.full-active:hover:not(:disabled) {
+    background: rgba(61,255,143,0.06);
+    box-shadow: 0 0 18px rgba(61,255,143,0.2);
+  }
+  .btn.restore-btn:hover:not(:disabled) {
+    background: rgba(0,229,204,0.08);
+    box-shadow: 0 0 12px rgba(0,229,204,0.15);
+  }
+  #restoreBtn:hover {
+    background: var(--amber);
+    border-color: var(--amber);
+    box-shadow: 0 0 18px rgba(0,229,204,0.35);
+  }
+  .filelist li:hover {
+    color: var(--dim2);
+    background: transparent;
+  }
+  .sleep-btn:hover {
+    border-color: var(--amber-lo);
+    color: var(--amber-dim);
+    background: transparent;
+  }
+  .sleep-btn.active:hover {
+    border-color: var(--amber);
+    color: var(--amber);
+    background: rgba(0,229,204,0.10);
+  }
+  input[type=range]::-webkit-slider-thumb:hover { transform: none; }
+}
+
 /* ─── MOBILE ─── */
 @media (max-width: 480px) {
   .header { padding: 16px 18px 14px; }
@@ -586,6 +750,7 @@ input[type=range]::-moz-range-thumb {
     padding-left: 16px;
     padding-right: 16px;
   }
+  .search-wrap { padding-left: 16px; padding-right: 16px; }
   #restoreBanner { padding: 12px 16px; }
   .setting-label {
     width: 82px;
@@ -596,8 +761,24 @@ input[type=range]::-moz-range-thumb {
     min-width: 34px;
     font-size: 11px;
   }
-  .wobble-val-wrap { min-width: 48px; }
+  /* モード最長 "▸ CASSETTE" に合わせて 64px (8px font, ls 1px で約60px) */
+  .wobble-val-wrap { width: 64px; }
   .wobble-mode { font-size: 8px; letter-spacing: 1px; }
+
+  /* ── Larger touch targets on mobile ── */
+  input[type=range] { height: 6px; }
+  input[type=range]::-webkit-slider-thumb { width: 22px; height: 22px; }
+  input[type=range]::-moz-range-thumb     { width: 22px; height: 22px; }
+
+  .filelist-wrap { max-height: 200px; -webkit-overflow-scrolling: touch; }
+  .filelist li { padding: 6px 4px; font-size: 11px; }
+  .histlist li { padding: 3px 0; }
+
+  /* footer too cramped on mobile — hide kbd hint */
+  .footer .kbd-hint { display: none; }
+
+  .sleep-buttons { gap: 4px; }
+  .sleep-btn { font-size: 9px; min-width: 32px; padding: 6px 4px; letter-spacing: 0; }
 }
 </style>
 </head>
@@ -681,7 +862,7 @@ input[type=range]::-moz-range-thumb {
       <div class="setting-val" id="valFade">8s</div>
     </div>
     <div class="setting-row">
-      <div class="setting-label">マスターボリューム</div>
+      <div class="setting-label vol-label-clickable" id="volLabel" title="クリックでミュート (M)">ボリューム</div>
       <input type="range" id="sliderVol" min="0" max="100" value="80" oninput="onVolumeChange()">
       <div class="setting-val vol-val" id="valVol">80%</div>
     </div>
@@ -693,12 +874,29 @@ input[type=range]::-moz-range-thumb {
         <div class="wobble-mode" id="wobbleMode">— OFF —</div>
       </div>
     </div>
+    <div class="setting-row sleep-row">
+      <div class="setting-label">⏰ スリープ</div>
+      <div class="sleep-buttons" id="sleepButtons">
+        <button type="button" class="sleep-btn active" data-min="0">OFF</button>
+        <button type="button" class="sleep-btn" data-min="15">15m</button>
+        <button type="button" class="sleep-btn" data-min="30">30m</button>
+        <button type="button" class="sleep-btn" data-min="60">60m</button>
+        <button type="button" class="sleep-btn" data-min="90">90m</button>
+      </div>
+      <div class="setting-val sleep-val" id="valSleep">—</div>
+    </div>
   </div>
 
   <!-- HISTORY -->
   <div class="history-wrap" id="historyWrap">
     <div class="history-label">◷ 再生履歴</div>
     <ul class="histlist" id="historyList"></ul>
+  </div>
+
+  <!-- SEARCH -->
+  <div class="search-wrap" id="searchWrap" style="display:none">
+    <input type="search" id="searchInput" placeholder="🔍 曲を検索..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    <span class="search-count" id="searchCount"></span>
   </div>
 
   <!-- FILE LIST -->
@@ -709,13 +907,13 @@ input[type=range]::-moz-range-thumb {
   <!-- FOOTER -->
   <div class="footer">
     <span>RANDOM JUKEBOX</span>
-    <span class="kbd-hint">SPACE=再生 　→=スキップ 　F=フルで聴く</span>
+    <span class="kbd-hint">SPACE=再生 　→=スキップ 　F=フル 　M=ミュート</span>
     <span>HTML5 AUDIO</span>
   </div>
 
 </div>
 
-<input type="file" id="folderInput" webkitdirectory multiple>
+<input type="file" id="folderInput" webkitdirectory multiple accept="audio/*">
 
 <script>
 // ════════════════════════════════════════════════════════
@@ -758,6 +956,23 @@ let playHistory  = [];         // 再生履歴 (最大5件)
 //   visibilitychange / statechange の自動復帰ロジックはこのフラグを尊重し、
 //   勝手に再開しない。MediaSession 'play' / togglePlay / stopAll でクリア。
 let userPaused = false;
+
+// ── 内部 audio.pause() 判別フラグ ──
+// finishCrossfade / resolveActiveSlot 等の内部処理から呼ぶ audio.pause() は
+// onExternalPause に「外部中断」と誤検知させてはいけない。誤検知すると pauseStartMs が
+// 立ち、次のスロットの play() で onExternalPlay が "pausedMs ぶん slotEndTime を後ろへ"
+// 補正してしまい、毎クロスフェードで slotEndTime が約 playDuration ぶんずつ後ろへずれて、
+// 最終的に audio.duration を超えて自然終了 → 次曲が来ず音が鳴らなくなる致命バグになる。
+// この値が >0 の間に発火した pause/play イベントは内部由来とみなして無視する。
+// HTML spec 上 'pause' は "queue a media element task" でディスパッチされる可能性が
+// あるため、queueMicrotask ではなく setTimeout で次タスク以降まで保持する。
+// 100ms 窓内に発生する外部 pause は確率的に無視されるが実害ない（電話着信等が
+// クロスフェード完了の 100ms 以内に発生するレース条件は非現実的）。
+let _internalAudioOp = 0;
+function markInternalAudioOp() {
+  _internalAudioOp++;
+  setTimeout(() => { _internalAudioOp = Math.max(0, _internalAudioOp - 1); }, 100);
+}
 
 // ── 次曲プリロード ──
 let preloadTimer        = null;    // 次曲を先行ロードするタイマー
@@ -862,6 +1077,93 @@ function debouncedSave(key, value) {
   _saveTimers[key] = setTimeout(() => {
     try { localStorage.setItem(key, value); } catch (_) {}
   }, 200);
+}
+
+// Safari プライベートモード等で localStorage.setItem が SecurityError を投げる
+// ケースを吸収する。書き込みに失敗しても致命的ではないので静かに無視する。
+function safeLSSet(key, value) {
+  try { localStorage.setItem(key, value); } catch (_) {}
+}
+function safeLSGet(key) {
+  try { return localStorage.getItem(key); } catch (_) { return null; }
+}
+
+// ════════════════════════════════════════════════════════
+//  PLAYBACK ADVANCE GUARD
+//  fadeTimer 内で「進めるべきか / 様子見すべきか」を判定するヘルパー。
+//  バックグラウンドで setTimeout が遅延し、発火時には audio が
+//  自然終了 (paused かつ ended) しているケースが頻発する。旧実装は
+//  `if (paused) return` で一律様子見していたため、自然終了した曲で
+//  クロスフェードが永遠に始まらず "音が止まる" バグになっていた。
+// ════════════════════════════════════════════════════════
+function shouldAdvancePlayback() {
+  if (userPaused) return false;          // ユーザー意図の pause → 様子見
+  const a = audios[activeSlot];
+  if (!a) return true;                   // slot 不在は仕切り直し
+  if (!a.paused) return true;            // 通常再生中 → 進める
+  // paused: 自然終了か外部 pause かを判定
+  const naturallyDone = a.ended ||
+    (isFinite(a.duration) && a.currentTime >= a.duration - 0.3);
+  return naturallyDone;                  // 終了 → 進める / 外部 pause → 様子見
+}
+
+// ════════════════════════════════════════════════════════
+//  WATCHDOG — バックグラウンド時の "音が止まる" 最終防衛線
+//  - fadeTimer がブラウザの省電力で大幅に遅延した
+//  - audio.play() が NotAllowedError で silently fail した
+//  - ended イベントが届かなかった (ブラウザバグ)
+//  これらで進行が止まったとき、5秒ごとに状態を確認して復帰させる。
+//  バックグラウンドでも setInterval は完全には停止しない（最低数秒
+//  おきには発火する）ため、最終防衛線として機能する。
+// ════════════════════════════════════════════════════════
+let watchdogTimer = null;
+function startWatchdog() {
+  if (watchdogTimer) return;
+  watchdogTimer = setInterval(checkPlaybackHealth, 5000);
+}
+function stopWatchdog() {
+  if (watchdogTimer) { clearInterval(watchdogTimer); watchdogTimer = null; }
+}
+function checkPlaybackHealth() {
+  if (!isPlaying || userPaused) return;
+
+  const a = audios[activeSlot];
+
+  // フルプレイモード: ended 取りこぼしの保険
+  if (isFullPlay) {
+    if (a && a.src && a.paused && (a.ended ||
+        (isFinite(a.duration) && a.currentTime >= a.duration - 0.5))) {
+      isFullPlay = false;
+      updateFullBtn();
+      playTrack(false);
+    }
+    return;
+  }
+
+  // クロスフェード進行中はノータッチ
+  if (isFading) return;
+  if (!a) return;
+
+  // src なし = 復旧不能 → playTrack で仕切り直す
+  if (!a.src) {
+    playTrack(false);
+    return;
+  }
+  // 自然終了したのにクロスフェードが始まっていない
+  if (a.paused && (a.ended ||
+      (isFinite(a.duration) && a.currentTime >= a.duration - 0.3))) {
+    triggerNextSong();
+    return;
+  }
+  // 外部 pause が解けないまま slotEndTime を大幅に超過 → 強制 advance
+  if (slotEndTime > 0 && Date.now() > slotEndTime + 5000) {
+    triggerNextSong();
+    return;
+  }
+  // paused だが ended でもない → 復帰を試みる（連打にならないよう静かに）
+  if (a.paused) {
+    a.play().catch(() => {});
+  }
 }
 
 // ════════════════════════════════════════════════════════
@@ -1029,12 +1331,14 @@ function resolveActiveSlot() {
 
   if (inGain > outGain) {
     // フェードインが進んでいる → inSlot を activeSlot に昇格
+    markInternalAudioOp();
     try { audios[activeSlot].pause(); } catch (_) {}
     clearSlotSrc(activeSlot);
     setSlotGain(activeSlot, 0);
     activeSlot = inSlot;
   } else {
     // outSlot がまだ主役 → inSlot だけ止める
+    markInternalAudioOp();
     try { audios[inSlot].pause(); } catch (_) {}
     clearSlotSrc(inSlot);
     setSlotGain(inSlot, 0);
@@ -1111,7 +1415,7 @@ async function selectFolder() {
     try {
       const handle = await window.showDirectoryPicker({ mode: 'read' });
       await idbSet('folderHandle', handle);
-      localStorage.setItem('lastFolderName', handle.name);
+      safeLSSet('lastFolderName', handle.name);
       await loadFilesFromHandle(handle);
       updateFolderBtn(handle.name);
       hideBanner();
@@ -1136,7 +1440,7 @@ document.getElementById('folderInput').addEventListener('change', function(e) {
   // フォルダ名をLocalStorageに保存してボタンを更新
   if (e.target.files.length > 0) {
     const folderName = e.target.files[0].webkitRelativePath.split('/')[0] || 'フォルダ';
-    localStorage.setItem('lastFolderName', folderName);
+    safeLSSet('lastFolderName', folderName);
     updateFolderBtn(folderName);
   }
 });
@@ -1190,7 +1494,7 @@ function showBanner(folderName, onRestoreClick) {
 }
 
 async function tryRestoreFolder() {
-  const savedName = localStorage.getItem('lastFolderName');
+  const savedName = safeLSGet('lastFolderName');
 
   if (!window.showDirectoryPicker) return;
   try {
@@ -1229,7 +1533,7 @@ async function restoreWithPermission(handle) {
     if (perm === 'granted') {
       await loadFilesFromHandle(handle);
       updateFolderBtn(handle.name);
-      localStorage.setItem('lastFolderName', handle.name);
+      safeLSSet('lastFolderName', handle.name);
     } else {
       alert('フォルダへのアクセスが拒否されました。「フォルダ選択」ボタンから再選択してください。');
     }
@@ -1251,6 +1555,34 @@ function renderFileList() {
     li.addEventListener('click', () => playSpecificTrack(i));
     ul.appendChild(li);
   });
+  // 検索ボックスの表示 / フィルタ再適用
+  const searchWrap = document.getElementById('searchWrap');
+  if (searchWrap) searchWrap.style.display = files.length > 0 ? 'flex' : 'none';
+  applySearchFilter();
+}
+
+// ════════════════════════════════════════════════════════
+//  SEARCH / FILTER
+// ════════════════════════════════════════════════════════
+function applySearchFilter() {
+  const input = document.getElementById('searchInput');
+  if (!input) return;
+  const q = input.value.toLowerCase().trim();
+  let visible = 0;
+  const lis = document.querySelectorAll('.filelist li');
+  lis.forEach((li, i) => {
+    if (!q) {
+      li.style.display = '';
+      visible++;
+    } else {
+      const name = files[i] ? stripExt(files[i].name).toLowerCase() : '';
+      const match = name.includes(q);
+      li.style.display = match ? '' : 'none';
+      if (match) visible++;
+    }
+  });
+  const countEl = document.getElementById('searchCount');
+  if (countEl) countEl.textContent = q ? (visible + ' / ' + files.length) : '';
 }
 
 function highlightFile(idx) {
@@ -1285,12 +1617,13 @@ async function playSpecificTrack(idx) {
     clearInterval(tickTimer);
     updateFullBtn();
 
-    audios.forEach((a, i) => { try { a.pause(); } catch (_) {} clearSlotSrc(i); });
+    audios.forEach((a, i) => { markInternalAudioOp(); try { a.pause(); } catch (_) {} clearSlotSrc(i); });
     activeSlot = 0;
     setSlotGain(0, 1);
     setSlotGain(1, 0);
 
     nextIdx = idx;
+    startWatchdog();             // 5秒間隔のヘルスチェックを開始
     playTrack(false);
     return;
   }
@@ -1366,6 +1699,9 @@ function resetWobbleNodes() {
 
 function startWobbleLoop() {
   if (wobbleLoopId) return;
+  // 不可視時に起動要求が来た場合は省電力のため起動しない。
+  // 可視へ戻ったタイミングで applyWobbleVisibilityRate() が再起動する。
+  if (document.hidden) return;
   wobbleLoopId = setInterval(wobbleTick, 65);
 }
 
@@ -1442,6 +1778,9 @@ function onVolumeChange() {
   document.getElementById('valVol').textContent = Math.round(masterVolume * 100) + '%';
   applyMasterVolume();
   debouncedSave('jukebox_vol', document.getElementById('sliderVol').value);
+  // ミュート表示の同期（スライダーを手動で 0 へ動かしたケースもラベルへ反映）
+  const label = document.getElementById('volLabel');
+  if (label) label.classList.toggle('muted', masterVolume === 0);
 }
 
 // ════════════════════════════════════════════════════════
@@ -1498,12 +1837,14 @@ async function togglePlay() {
   document.getElementById('btnPlay').classList.add('stop-mode');
   document.getElementById('btnSkip').disabled = false;
   document.getElementById('btnFull').disabled = false;
+  startWatchdog();               // 5秒間隔のヘルスチェックを開始
   playTrack(true);
 }
 
 function stopAll() {
   isPlaying  = false;
   isFading   = false;
+  stopWatchdog();              // ヘルスチェック停止
   isFullPlay = false;
   operationId++;                 // 進行中のすべての非同期コールバックを無効化
   clearTimeout(fadeTimer);
@@ -1543,6 +1884,7 @@ function stopAll() {
   // forEach はコールバック内の例外を呼び出し元に伝播させるため、
   // pause() が slot 0 で投げると slot 1 を含む後続処理が止まる。
   audios.forEach((a, i) => {
+    markInternalAudioOp();
     try { a.pause(); } catch (_) {}
     if (!actx) a.volume = 0;   // WebAudio 未使用フォールバック用のみ消音
     clearSlotSrc(i);
@@ -1569,6 +1911,20 @@ function stopAll() {
   document.getElementById('btnSkip').disabled = true;
   document.getElementById('btnFull').disabled = true;
   updateFullBtn();
+
+  // スリープタイマーが動作中なら停止と同時に解除（ユーザーが先に止めたケース）
+  if (sleepTimerId || sleepDisplayTimer || sleepEndTime > 0) {
+    clearTimeout(sleepTimerId);
+    clearInterval(sleepDisplayTimer);
+    sleepTimerId = null;
+    sleepDisplayTimer = null;
+    sleepEndTime = 0;
+    document.querySelectorAll('.sleep-btn').forEach(b => {
+      b.classList.toggle('active', +b.dataset.min === 0);
+    });
+    const v = document.getElementById('valSleep');
+    if (v) v.textContent = '—';
+  }
 
   setUIIdle();
   document.getElementById('vinyl').classList.remove('spinning');
@@ -1611,8 +1967,8 @@ function toggleFullPlay() {
       clearTimeout(fadeTimer);
       fadeTimer = setTimeout(() => {
         if (myOp !== operationId || !isPlaying || isFading || isFullPlay) return;
-        // 外部 pause 中はトリガーしない
-        if (audios[activeSlot] && audios[activeSlot].paused) return;
+        // shouldAdvancePlayback: 自然終了なら advance、外部 pause なら様子見
+        if (!shouldAdvancePlayback()) return;
         startCrossfade(true);  // operationId はインクリメント済み
       }, Math.max(100, endTime - fadeDuration * 1000 - Date.now()));
     } else {
@@ -1797,8 +2153,8 @@ function playTrack(first = false) {
       // カウントダウンが0になるタイミングにtriggerNextSong
       fadeTimer = setTimeout(() => {
         if (myOp !== operationId || !isPlaying || isFading || isFullPlay) return;
-        // 外部 pause（電話等）中はトリガーしない。onExternalPlay が再スケジュールする。
-        if (audios[activeSlot] && audios[activeSlot].paused) return;
+        // shouldAdvancePlayback: 自然終了なら advance、外部 pause なら様子見
+        if (!shouldAdvancePlayback()) return;
         triggerNextSong();
       }, (playDuration + fadeDuration) * 1000);
 
@@ -1822,6 +2178,9 @@ function playTrack(first = false) {
     }).catch(err => {
       if (myOp !== operationId || !isPlaying) return;
       console.warn('Play failed:', err);
+      // 失敗の主因は AudioContext suspend or 自動再生ポリシー。
+      // resume を試みてから世代ガード越しにリトライする。
+      if (actx && actx.state === 'suspended') actx.resume().catch(() => {});
       setTimeout(() => { if (myOp === operationId && isPlaying) playTrack(false); }, 500);
     });
   }
@@ -1986,6 +2345,19 @@ function startCrossfade(alreadyBumped = false) {
       if (myOp !== operationId || !isPlaying || isFullPlay) return; // play()完了時に再チェック
       setUIFading();
 
+      // ── 新曲の ended リスナー登録 ──
+      // 以前は startCrossfade で乗ってきた曲に ended リスナーが付かず、
+      // 何らかの理由（drift・短い audio）で fadeTimer より先に自然終了すると
+      // triggerNextSong が呼ばれず音が止まる致命バグがあった。
+      // ここで世代ガード付きの ended ハンドラを登録して保険にする。
+      function onCrossfadeEnded() {
+        inAudio.removeEventListener('ended', onCrossfadeEnded);
+        if (myOp !== operationId || !isPlaying || isFading || isFullPlay) return;
+        clearTimeout(fadeTimer);
+        triggerNextSong();
+      }
+      inAudio.addEventListener('ended', onCrossfadeEnded);
+
       clearInterval(xfadeTimer);
 
       const startOutGain = (actx && gainA)
@@ -2038,6 +2410,8 @@ function startCrossfade(alreadyBumped = false) {
       isFading = false;
       setSlotGain(outSlot, 1);   // outSlot を音量MAX に戻す
       setSlotGain(inSlot,  0);
+      // 失敗主因は AudioContext suspend のことが多い。resume を試みてから仕切り直す。
+      if (actx && actx.state === 'suspended') actx.resume().catch(() => {});
       setTimeout(() => { if (myOp === operationId && isPlaying) playTrack(false); }, 300);
     });
   }
@@ -2087,6 +2461,11 @@ function finishCrossfade(outSlot, inSlot) {
   preloadedForIdx = -1;
 
   if (outSlot !== undefined) {
+    // ★重要★ クロスフェード完了時の outSlot pause は内部処理。
+    // markInternalAudioOp なしだと onExternalPause が pauseStartMs を立て、
+    // 次の startCrossfade の inAudio.play() で slotEndTime が ~playDuration ぶん
+    // ずれ、ループ毎に蓄積。最終的に audio.duration を超えて音が止まる。
+    markInternalAudioOp();
     try { audios[outSlot].pause(); } catch (_) {}
     clearSlotSrc(outSlot);
     setSlotGain(outSlot, 0);
@@ -2124,8 +2503,8 @@ function finishCrossfade(outSlot, inSlot) {
   clearTimeout(fadeTimer);
   fadeTimer = setTimeout(() => {
     if (myFinishOp !== operationId || !isPlaying || isFading || isFullPlay) return;
-    // 外部 pause 中なら発火しない。onExternalPlay 側で再スケジュールされる。
-    if (audios[activeSlot] && audios[activeSlot].paused) return;
+    // shouldAdvancePlayback: 自然終了なら advance、外部 pause なら様子見
+    if (!shouldAdvancePlayback()) return;
     triggerNextSong();
   }, Math.max(100, slotEndTime - Date.now()));
 }
@@ -2304,19 +2683,47 @@ function setUIIdle() {
   // 後ろへずらし、fadeTimer を再スケジュールする。
   let pauseStartMs = 0;
 
-  // ── 揺らぎループのレート切替（可視/不可視）──
-  // 可視中: 65ms（音色変化が滑らか）／不可視中: 200ms（CPU ウェイクアップを 1/3 に）。
-  // 完全停止だと音色がフラットになるので残し、レートだけ落とす。
+  // ── 揺らぎループの可視/不可視制御 ──
+  // 可視中: 65ms で滑らかにティック。
+  // 不可視中: 完全停止して CPU ウェイクアップをゼロにする。ゲイン/フィルター/playbackRate は
+  // 最後の値が保持されるので音は途切れず鳴り続ける（バックグラウンドで揺らぎが固定されるだけ）。
   const WOBBLE_INTERVAL_VISIBLE = 65;
-  const WOBBLE_INTERVAL_HIDDEN  = 200;
   function applyWobbleVisibilityRate() {
-    if (!wobbleLoopId) return;
-    clearInterval(wobbleLoopId);
-    wobbleLoopId = setInterval(
-      wobbleTick,
-      document.hidden ? WOBBLE_INTERVAL_HIDDEN : WOBBLE_INTERVAL_VISIBLE
-    );
+    if (document.hidden) {
+      // 不可視中: ループ完全停止
+      if (wobbleLoopId) { clearInterval(wobbleLoopId); wobbleLoopId = null; }
+    } else if (wobbleIntensity > 0 && !wobbleLoopId) {
+      // 可視復帰: wobble 有効なら再起動
+      wobbleLoopId = setInterval(wobbleTick, WOBBLE_INTERVAL_VISIBLE);
+    }
   }
+
+  // ── スリープタイマー表示の可視/不可視制御 ──
+  // 不可視中は valSleep の DOM 更新が無意味なので 1Hz タイマーを停止する。
+  // タイマー満了の本体（sleepTimerId の setTimeout）は wall-clock で進むので別に止めない。
+  function applySleepDisplayVisibility() {
+    if (document.hidden) {
+      if (sleepDisplayTimer) { clearInterval(sleepDisplayTimer); sleepDisplayTimer = null; }
+    } else if (sleepEndTime > 0 && !sleepDisplayTimer) {
+      // 表示を即座に同期してから 1Hz 再開
+      const rem = Math.max(0, sleepEndTime - Date.now());
+      const m = Math.floor(rem / 60000);
+      const s = Math.floor((rem % 60000) / 1000);
+      const v = document.getElementById('valSleep');
+      if (v) v.textContent = m + ':' + String(s).padStart(2, '0');
+      sleepDisplayTimer = setInterval(() => {
+        const r = Math.max(0, sleepEndTime - Date.now());
+        const mm = Math.floor(r / 60000);
+        const ss = Math.floor((r % 60000) / 1000);
+        const vv = document.getElementById('valSleep');
+        if (vv) vv.textContent = mm + ':' + String(ss).padStart(2, '0');
+        if (r <= 0) { clearInterval(sleepDisplayTimer); sleepDisplayTimer = null; }
+      }, 1000);
+    }
+  }
+
+  // 各オーディオ要素の最終 currentTime（停滞検出用）
+  const _lastTime = [0, 0];
 
   // visibilitychange: 画面オフ/別タブで UI タイマーを止め、復帰時に再開する。
   // ユーザーが MediaSession ポーズで明示的に止めた場合は再開を抑止する。
@@ -2325,20 +2732,22 @@ function setUIIdle() {
 
     if (document.visibilityState !== 'visible') {
       // ── 画面が隠れた: UI 更新タイマーを止めて電力を節約 ──
-      // クロスフェードと fadeTimer は Web Audio 側で進むので止めなくて良い。
-      // tickTimer は見えないプログレスバーを更新するだけなので止める。
+      // クロスフェードと fadeTimer は wall-clock 駆動なので止めなくて良い。
+      // tickTimer・vinyl アニメ・wobble・スリープ表示は全停止。
       clearInterval(tickTimer);
-      // レコード回転アニメ: 不可視中は GPU コンポジット更新を停止
       if (vinyl) vinyl.style.animationPlayState = 'paused';
-      // 揺らぎ: 不可視中はレートを落とす（音は鳴り続ける）
       applyWobbleVisibilityRate();
+      applySleepDisplayVisibility();
+      // 停滞検出用の現在位置をスナップショット
+      _lastTime[0] = audios[0].currentTime || 0;
+      _lastTime[1] = audios[1].currentTime || 0;
       return;
     }
 
     // ── 画面が戻った ──
-    // 装飾アニメ・揺らぎを通常レートに戻す
     if (vinyl) vinyl.style.animationPlayState = '';
     applyWobbleVisibilityRate();
+    applySleepDisplayVisibility();
 
     if (!isPlaying) return;
 
@@ -2353,19 +2762,29 @@ function setUIIdle() {
     // ユーザーが意図的にポーズした状態なら、自動で鳴らさない
     if (userPaused) return;
 
-    // AudioContext が止まっていたら再開
-    if (actx && actx.state === 'suspended') {
-      actx.resume().then(() => {
-        audios.forEach(a => {
-          if (a.src && a.paused) a.play().catch(() => {});
-        });
+    // AudioContext が止まっていたら再開してから audio.play() を試みる
+    const resumeIfNeeded = () => {
+      if (actx && actx.state === 'suspended') {
+        return actx.resume().catch(() => {});
+      }
+      return Promise.resolve();
+    };
+    resumeIfNeeded().then(() => {
+      audios.forEach(a => {
+        if (a.src && a.paused) a.play().catch(() => {});
       });
-      return;
-    }
-
-    // audio 要素が止まっていたら再開（AudioContext は動いているケース）
-    audios.forEach(a => {
-      if (a.src && a.paused) a.play().catch(() => {});
+      // ── 停滞検出: 不可視中に currentTime がほとんど進んでいなければ
+      //   バックグラウンドで音が止まっていた可能性 → 仕切り直す ──
+      const cur = audios[activeSlot];
+      if (cur && cur.src && !isFading) {
+        const advanced = (cur.currentTime || 0) - (_lastTime[activeSlot] || 0);
+        // 1 秒以上不可視で 0.3 秒以下しか進んでない、かつ duration 終端でもないなら停滞とみなす
+        const nearEnd = isFinite(cur.duration) && (cur.duration - cur.currentTime) < 0.5;
+        if (advanced < 0.3 && !nearEnd && !cur.paused) {
+          // ループ再生中に止まっていた疑い：軽くキックして起こす
+          cur.play().catch(() => {});
+        }
+      }
     });
   });
 
@@ -2386,6 +2805,10 @@ function setUIIdle() {
   // pause イベントで中断を検知（電話着信など外部要因による pause）
   // ユーザーの意図的な STOP とは isPlaying で区別できる
   function onExternalPause(e) {
+    // 内部処理（finishCrossfade / resolveActiveSlot / stopAll 等）が呼んだ
+    // audio.pause() のイベントは無視する。誤検知させると slotEndTime が
+    // クロスフェード毎に約 playDuration ぶん後ろへずれていく重大バグになる。
+    if (_internalAudioOp > 0) return;
     if (!isPlaying) return; // ユーザーが止めた場合は何もしない
     if (pauseStartMs === 0) pauseStartMs = Date.now();
     wasPlayingBeforeInterrupt = true;
@@ -2406,7 +2829,7 @@ function setUIIdle() {
         const remMs = Math.max(100, slotEndTime - Date.now());
         fadeTimer = setTimeout(() => {
           if (opAtResume !== operationId || !isPlaying || isFading || isFullPlay) return;
-          if (audios[activeSlot] && audios[activeSlot].paused) return;
+          if (!shouldAdvancePlayback()) return;
           triggerNextSong();
         }, remMs);
       }
@@ -2427,7 +2850,18 @@ function setUIIdle() {
     if (!actx) return;
     clearInterval(acStateWatcher);
     actx.addEventListener('statechange', () => {
-      if (actx.state === 'running' && wasPlayingBeforeInterrupt && isPlaying && !userPaused) {
+      if (!actx) return;
+      // ── suspended へ落ちた: 再生中なら能動的に resume を試みる ──
+      // 画面オフ中のシステム省電力で AudioContext が勝手に suspend されると
+      // audio はミュート状態になる。直近のユーザー操作が必要な実装もあるが
+      // 大抵のブラウザでは resume() が成功する。失敗しても害はない。
+      if (actx.state === 'suspended' && isPlaying && !userPaused) {
+        actx.resume().catch(() => {});
+        return;
+      }
+      // ── running 復帰: audio 要素が paused になっているケースをカバー ──
+      // wasPlayingBeforeInterrupt フラグの有無に関わらず、確実に再生し直す。
+      if (actx.state === 'running' && isPlaying && !userPaused) {
         wasPlayingBeforeInterrupt = false;
         audios.forEach(a => {
           if (a.src && a.paused) a.play().catch(() => {});
@@ -2435,13 +2869,184 @@ function setUIIdle() {
       }
     });
   }, 200);
+
+  // ── audio.error: 再生中の致命的エラーから自動復旧 ──
+  // ファイル破損・ネットワーク中断・デコード失敗等でいきなり止まったときに
+  // 次曲へリカバリする。世代 (operationId) ガード付き。
+  audios.forEach((a, slot) => {
+    a.addEventListener('error', () => {
+      if (!isPlaying) return;
+      if (slot !== activeSlot && !isFading) return;
+      console.warn('Audio runtime error on slot', slot, a.error);
+      const opAtError = operationId;
+      setTimeout(() => {
+        if (opAtError !== operationId || !isPlaying) return;
+        // AudioContext を起こしてから仕切り直す
+        if (actx && actx.state === 'suspended') actx.resume().catch(() => {});
+        playTrack(false);
+      }, 400);
+    });
+    // stalled: 進行が止まったが error ではない（ネットワーク stall 等）。
+    // 連発するので debounce + ガード。
+    let _stallTimer = null;
+    a.addEventListener('stalled', () => {
+      if (!isPlaying) return;
+      if (slot !== activeSlot && !isFading) return;
+      clearTimeout(_stallTimer);
+      const opAtStall = operationId;
+      _stallTimer = setTimeout(() => {
+        if (opAtStall !== operationId || !isPlaying) return;
+        // まだ再生されている（pausedでない）なら問題ない場合もあるが、
+        // 1.5秒以上 currentTime が動いていないかを軽くチェック
+        const t0 = a.currentTime;
+        setTimeout(() => {
+          if (opAtStall !== operationId || !isPlaying) return;
+          if (a.currentTime <= t0 + 0.05 && !a.paused) {
+            if (actx && actx.state === 'suspended') actx.resume().catch(() => {});
+            a.play().catch(() => {});
+          }
+        }, 1500);
+      }, 1500);
+    });
+  });
+})();
+
+// ════════════════════════════════════════════════════════
+//  MUTE (M キー / マスターボリュームラベルクリック)
+// ════════════════════════════════════════════════════════
+// ミュート前の音量を保持する。0 を保存しないように 0 以下なら 0.8 にフォールバック。
+let _preMuteVol = 0.8;
+
+function toggleMute() {
+  const slider = document.getElementById('sliderVol');
+  const label  = document.getElementById('volLabel');
+  if (!slider) return;
+  const current = +slider.value;
+  if (current > 0) {
+    // ミュート ON
+    _preMuteVol = current / 100;
+    slider.value = 0;
+    if (label) label.classList.add('muted');
+  } else {
+    // ミュート解除
+    const restore = _preMuteVol > 0 ? _preMuteVol : 0.8;
+    slider.value = Math.round(restore * 100);
+    if (label) label.classList.remove('muted');
+  }
+  onVolumeChange();
+}
+
+// ════════════════════════════════════════════════════════
+//  SLEEP TIMER
+// ════════════════════════════════════════════════════════
+let sleepTimerId       = null;
+let sleepDisplayTimer  = null;
+let sleepEndTime       = 0;
+
+function setSleepTimer(minutes) {
+  clearTimeout(sleepTimerId);
+  clearInterval(sleepDisplayTimer);
+  sleepTimerId = null;
+  sleepDisplayTimer = null;
+
+  document.querySelectorAll('.sleep-btn').forEach(b => {
+    b.classList.toggle('active', +b.dataset.min === minutes);
+  });
+
+  if (!minutes || minutes <= 0) {
+    sleepEndTime = 0;
+    const v = document.getElementById('valSleep');
+    if (v) v.textContent = '—';
+    return;
+  }
+
+  sleepEndTime = Date.now() + minutes * 60 * 1000;
+
+  function updateDisplay() {
+    const rem = Math.max(0, sleepEndTime - Date.now());
+    const m = Math.floor(rem / 60000);
+    const s = Math.floor((rem % 60000) / 1000);
+    const v = document.getElementById('valSleep');
+    if (v) v.textContent = m + ':' + String(s).padStart(2, '0');
+    if (rem <= 0) clearInterval(sleepDisplayTimer);
+  }
+  updateDisplay();
+  sleepDisplayTimer = setInterval(updateDisplay, 1000);
+
+  // フェードアウトで自然に止める（クロスフェード秒数を流用）
+  sleepTimerId = setTimeout(() => {
+    sleepEndTime = 0;
+    if (isPlaying) sleepFadeOut();
+    document.querySelectorAll('.sleep-btn').forEach(b => {
+      b.classList.toggle('active', +b.dataset.min === 0);
+    });
+    const v = document.getElementById('valSleep');
+    if (v) v.textContent = '—';
+    clearInterval(sleepDisplayTimer);
+  }, minutes * 60 * 1000);
+}
+
+// スリープ満了時のソフト停止：fadeDuration かけてマスターをフェードアウトしてから stopAll。
+function sleepFadeOut() {
+  const dur = Math.max(2, fadeDuration);
+  if (actx && masterGain) {
+    const now = actx.currentTime;
+    masterGain.gain.cancelScheduledValues(now);
+    masterGain.gain.setValueAtTime(masterGain.gain.value, now);
+    masterGain.gain.linearRampToValueAtTime(0, now + dur);
+  }
+  // フェード中の状態表示
+  const dot  = document.getElementById('statusDot');
+  const text = document.getElementById('statusText');
+  if (dot)  dot.className = 'status-dot xfade';
+  if (text) text.textContent = 'SLEEP FADING...';
+
+  setTimeout(() => {
+    stopAll();
+    // masterGain を復帰させる（stopAll でも復帰するが念のため）
+    if (actx && masterGain) {
+      masterGain.gain.cancelScheduledValues(actx.currentTime);
+      masterGain.gain.setValueAtTime(masterVolume, actx.currentTime);
+    }
+  }, dur * 1000);
+}
+
+// Sleep ボタンのクリックを一括バインド
+document.querySelectorAll('.sleep-btn').forEach(b => {
+  b.addEventListener('click', () => setSleepTimer(+b.dataset.min));
+});
+
+// ボリュームラベル: クリックでミュート
+(function bindVolLabel() {
+  const label = document.getElementById('volLabel');
+  if (label) label.addEventListener('click', toggleMute);
+})();
+
+// 検索フィールド
+(function bindSearch() {
+  const inp = document.getElementById('searchInput');
+  if (!inp) return;
+  inp.addEventListener('input', applySearchFilter);
+  // Esc でクリア
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      inp.value = '';
+      applySearchFilter();
+      inp.blur();
+    }
+  });
 })();
 
 // ════════════════════════════════════════════════════════
 //  KEYBOARD SHORTCUTS
 // ════════════════════════════════════════════════════════
 document.addEventListener('keydown', e => {
-  if (e.target.tagName === 'INPUT') return; // スライダー操作中は無視
+  // INPUT / TEXTAREA / 検索フィールド入力中はショートカット無効
+  const tag = e.target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+  // IME 変換中は無視
+  if (e.isComposing || e.keyCode === 229) return;
+
   switch (e.code) {
     case 'Space':
       e.preventDefault();
@@ -2461,6 +3066,20 @@ document.addEventListener('keydown', e => {
     case 'KeyF':
       if (!document.getElementById('btnFull').disabled) toggleFullPlay();
       break;
+    case 'KeyM':
+      toggleMute();
+      break;
+    case 'Slash':
+      // "/" で検索フォーカス（モディファイア無し時のみ）
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        const inp = document.getElementById('searchInput');
+        if (inp && inp.offsetParent !== null) {
+          e.preventDefault();
+          inp.focus();
+          inp.select();
+        }
+      }
+      break;
   }
 });
 
@@ -2478,10 +3097,10 @@ document.addEventListener('keyup', e => {
 // ════════════════════════════════════════════════════════
 // LocalStorageから前回の設定を復元してスライダーに反映
 (function loadSavedSettings() {
-  const savedPlay   = localStorage.getItem('jukebox_play');
-  const savedFade   = localStorage.getItem('jukebox_fade');
-  const savedVol    = localStorage.getItem('jukebox_vol');
-  const savedWobble = localStorage.getItem('jukebox_wobble');
+  const savedPlay   = safeLSGet('jukebox_play');
+  const savedFade   = safeLSGet('jukebox_fade');
+  const savedVol    = safeLSGet('jukebox_vol');
+  const savedWobble = safeLSGet('jukebox_wobble');
   if (savedPlay   !== null) document.getElementById('sliderPlay').value   = savedPlay;
   if (savedFade   !== null) document.getElementById('sliderFade').value   = savedFade;
   if (savedVol    !== null) document.getElementById('sliderVol').value    = savedVol;
