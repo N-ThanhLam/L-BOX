@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="format-detection" content="telephone=no">
+<meta name="description" content="L-BOX — ローカルフォルダの音源をクロスフェードでつないで流すブラウザ完結型ランダムジュークボックス。揺らぎ・スリープタイマー・ロック画面操作対応。">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon.svg">
 <title>L-BOX</title>
@@ -319,12 +320,40 @@ body {
   box-shadow: 0 0 22px rgba(255,68,85,0.3);
 }
 
+/* Full Play / Repeat 1 — 2ボタンを横並びに収める行 */
+.full-repeat-row {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 10px;
+}
+.full-repeat-row .btn {
+  flex: 1;
+  min-width: 0;       /* flex子の min-content による横はみ出しを抑制 */
+}
+
 /* Full Play button */
 .btn.full-btn {
-  grid-column: 1 / -1;
   font-size: 11px;
   letter-spacing: 2px;
   padding: 11px 8px;
+}
+
+/* Repeat 1 button — 通常状態は Full と同じ落ち着いた見た目 */
+.btn.repeat-btn {
+  font-size: 11px;
+  letter-spacing: 2px;
+  padding: 11px 8px;
+}
+/* アクティブ時はネオン系シアンで Full(緑) と視覚的に分離 */
+.btn.repeat-btn.repeat-active {
+  border-color: var(--neon);
+  color: var(--neon);
+  background: rgba(0,255,238,0.06);
+  box-shadow: 0 0 18px rgba(0,255,238,0.2);
+}
+.btn.repeat-btn.repeat-active:hover:not(:disabled) {
+  background: rgba(0,255,238,0.12);
+  box-shadow: 0 0 28px rgba(0,255,238,0.35);
 }
 
 /* Restore button */
@@ -567,6 +596,10 @@ input[type=range]::-moz-range-thumb {
   padding: 12px 28px 16px;
   max-height: 150px;
   overflow-y: auto;
+  /* Firefox 用標準プロパティ。-webkit-scrollbar は Chrome/Safari 専用で
+     Firefox では太いデフォルトバーが出てジュークボックスの細身デザインが崩れていた。 */
+  scrollbar-width: thin;
+  scrollbar-color: var(--amber-lo) transparent;
 }
 .filelist-wrap::-webkit-scrollbar { width: 3px; }
 .filelist-wrap::-webkit-scrollbar-track { background: transparent; }
@@ -765,6 +798,10 @@ input[type=range]::-moz-range-thumb {
     background: rgba(61,255,143,0.06);
     box-shadow: 0 0 18px rgba(61,255,143,0.2);
   }
+  .btn.repeat-btn.repeat-active:hover:not(:disabled) {
+    background: rgba(0,255,238,0.06);
+    box-shadow: 0 0 18px rgba(0,255,238,0.2);
+  }
   .btn.restore-btn:hover:not(:disabled) {
     background: rgba(0,229,204,0.08);
     box-shadow: 0 0 12px rgba(0,229,204,0.15);
@@ -883,7 +920,10 @@ input[type=range]::-moz-range-thumb {
     <button class="btn" id="btnFolder">📁 フォルダ選択</button>
     <button class="btn primary" id="btnPlay" disabled aria-pressed="false" onclick="togglePlay()">▶ PLAY</button>
     <button class="btn" id="btnSkip" disabled onclick="skipTrack()">⏭ スキップ</button>
-    <button class="btn full-btn" id="btnFull" disabled aria-pressed="false" onclick="toggleFullPlay()">♾ フルで聴く</button>
+    <div class="full-repeat-row">
+      <button class="btn full-btn" id="btnFull" disabled aria-pressed="false" onclick="toggleFullPlay()">♾ フルで聴く</button>
+      <button class="btn repeat-btn" id="btnRepeat" disabled aria-pressed="false" onclick="toggleRepeatOne()">🔂 リピート1</button>
+    </div>
   </div>
 
   <!-- RESTORE BANNER -->
@@ -958,7 +998,7 @@ input[type=range]::-moz-range-thumb {
   <!-- FOOTER -->
   <div class="footer">
     <span>RANDOM JUKEBOX</span>
-    <span class="kbd-hint">SPACE=再生 　→=スキップ 　F=フル 　M=ミュート</span>
+    <span class="kbd-hint">SPACE=再生 　→=スキップ 　F=フル 　R=リピート 　M=ミュート</span>
     <span>HTML5 AUDIO</span>
   </div>
 
@@ -975,7 +1015,8 @@ let currentIdx   = -1;
 let nextIdx      = -1;
 let isPlaying    = false;
 let isFading     = false;
-let isFullPlay   = false;      // フルで聴くモード
+let isFullPlay   = false;      // フルで聴くモード（1曲フル → 次へ）
+let isRepeatOne  = false;      // リピート1モード（現在曲を頭から無限ループ）
 let activeSlot   = 0;
 
 let playDuration = 12;         // solo play seconds (12 + 8 = 20)
@@ -1077,20 +1118,17 @@ function setupMediaSession() {
     }));
 
     ms.setActionHandler('pause', safe(() => {
-      // 「ユーザーが明示的に止めた」フラグを立てて自動復帰を抑止
-      userPaused = true;
-      audios.forEach(a => { try { a.pause(); } catch(_) {} });
-      setMediaSessionPlaybackState('paused');
+      pauseAll();
     }));
 
     ms.setActionHandler('nexttrack', safe(() => {
       if (isPlaying) skipTrack();
     }));
 
-    // ランダムジュークボックスに前曲はないのでスキップに割り当て
-    ms.setActionHandler('previoustrack', safe(() => {
-      if (isPlaying) skipTrack();
-    }));
+    // ランダムジュークボックスに「前曲」の概念がない。
+    // null を渡して明示的に無効化することで、ロック画面/通知パネル/BTリモコンで
+    // previous ボタンが押下不可（グレーアウト）になり、誤って次曲へ飛ぶUXバグを防ぐ。
+    try { ms.setActionHandler('previoustrack', null); } catch(_) {}
 
     try {
       ms.setActionHandler('stop', safe(() => {
@@ -1179,6 +1217,16 @@ function checkPlaybackHealth() {
   if (!isPlaying || userPaused) return;
 
   const a = audios[activeSlot];
+
+  // リピート1: audio.loop=true が進行を担うので、停止していれば軽くキックするだけ
+  if (isRepeatOne) {
+    if (a && a.src && a.paused) {
+      a.play().catch(() => {});
+      // tickTimer が停止していた場合（visibilitychange 等）もプログレスバーを再起動する
+      startRepeatCountdown();
+    }
+    return;
+  }
 
   // フルプレイモード: ended 取りこぼしの保険
   if (isFullPlay) {
@@ -1553,7 +1601,11 @@ function updateFolderBtn(name) {
 }
 
 function hideBanner() {
-  document.getElementById('restoreBanner').style.display = 'none';
+  const banner = document.getElementById('restoreBanner');
+  banner.style.display = 'none';
+  // showErrorBanner が立てた role=alert を残すと、次に通常バナーで表示した際に
+  // スクリーンリーダーが「警告」として読み上げてしまう。隠す段階で必ず外す。
+  banner.removeAttribute('role');
 }
 
 function showBanner(folderName, onRestoreClick) {
@@ -1737,11 +1789,15 @@ async function playSpecificTrack(idx) {
     _bp.textContent = '⏹ STOP';
     _bp.classList.add('stop-mode');
     _bp.setAttribute('aria-pressed', 'true');
-    document.getElementById('btnSkip').disabled = false;
-    document.getElementById('btnFull').disabled = false;
+    document.getElementById('btnSkip').disabled   = false;
+    document.getElementById('btnFull').disabled   = false;
+    document.getElementById('btnRepeat').disabled = false;
 
-    isFading   = false;
-    isFullPlay = false;
+    isFading    = false;
+    isFullPlay  = false;
+    isRepeatOne = false;
+    audios.forEach(a => { a.loop = false; });
+    updateRepeatBtn();
     operationId++;               // 古い非同期処理を無効化
     clearTimeout(fadeTimer);
     clearInterval(xfadeTimer);
@@ -1756,6 +1812,12 @@ async function playSpecificTrack(idx) {
     nextIdx = idx;
     startWatchdog();             // 5秒間隔のヘルスチェックを開始
     playTrack(false);
+    return;
+  }
+
+  // リピート1 中: 指定曲を新しいリピート対象として頭から再生し直す
+  if (isRepeatOne) {
+    playRepeatOneTrack(idx);
     return;
   }
 
@@ -1803,10 +1865,14 @@ function getWobbleMode(v) {
 }
 
 function onWobbleChange() {
-  const raw = +document.getElementById('sliderWobble').value;
+  const slider = document.getElementById('sliderWobble');
+  const raw = +slider.value;
   wobbleIntensity = raw / 100;
   document.getElementById('valWobble').textContent = raw;
-  document.getElementById('wobbleMode').textContent = getWobbleMode(raw);
+  const modeLabel = getWobbleMode(raw);
+  document.getElementById('wobbleMode').textContent = modeLabel;
+  // SR には数値だけでなくモード名も伝える（例: "0 OFF" / "45 ゆらぎ"）
+  slider.setAttribute('aria-valuetext', raw + ' ' + modeLabel.replace(/[—▸\s]/g, ''));
 
   if (wobbleIntensity === 0) resetWobbleNodes();
   if (wobbleIntensity > 0 && !wobbleLoopId) startWobbleLoop();
@@ -1894,21 +1960,30 @@ function wobbleTick() {
 }
 
 function onSettingChange() {
-  playDuration = +document.getElementById('sliderPlay').value;
-  fadeDuration = +document.getElementById('sliderFade').value;
+  const sliderPlay = document.getElementById('sliderPlay');
+  const sliderFade = document.getElementById('sliderFade');
+  playDuration = +sliderPlay.value;
+  fadeDuration = +sliderFade.value;
   document.getElementById('valPlay').textContent    = playDuration + 's';
   document.getElementById('valFade').textContent    = fadeDuration + 's';
   document.getElementById('totalBadge').textContent = (playDuration + fadeDuration) + 's';
+  // SR 向けに単位「秒」を読ませる
+  sliderPlay.setAttribute('aria-valuetext', playDuration + '秒');
+  sliderFade.setAttribute('aria-valuetext', fadeDuration + '秒');
   // 設定の永続化（ドラッグ中の連続発火を debouncedSave で吸収）
-  debouncedSave('jukebox_play', document.getElementById('sliderPlay').value);
-  debouncedSave('jukebox_fade', document.getElementById('sliderFade').value);
+  debouncedSave('jukebox_play', sliderPlay.value);
+  debouncedSave('jukebox_fade', sliderFade.value);
 }
 
 function onVolumeChange() {
-  masterVolume = +document.getElementById('sliderVol').value / 100;
-  document.getElementById('valVol').textContent = Math.round(masterVolume * 100) + '%';
+  const sliderVol = document.getElementById('sliderVol');
+  masterVolume = +sliderVol.value / 100;
+  const pct = Math.round(masterVolume * 100);
+  document.getElementById('valVol').textContent = pct + '%';
+  // SR 向けに単位「%」とミュート状態を読ませる
+  sliderVol.setAttribute('aria-valuetext', pct === 0 ? 'ミュート' : pct + 'パーセント');
   applyMasterVolume();
-  debouncedSave('jukebox_vol', document.getElementById('sliderVol').value);
+  debouncedSave('jukebox_vol', sliderVol.value);
   // ミュート表示の同期（スライダーを手動で 0 へ動かしたケースもラベルへ反映）
   const label = document.getElementById('volLabel');
   if (label) {
@@ -1959,12 +2034,20 @@ function randIdx(exclude = -1) {
 //  PLAY / STOP
 // ════════════════════════════════════════════════════════
 async function togglePlay() {
-  if (isPlaying) { stopAll(); return; }
-  userPaused = false;            // 再生開始でユーザー pause 状態を解除
-  await resumeAudioContext();   // ジェスチャー文脈で確実に resume してから再生
+  if (isPlaying) { pauseAll(); return; }
+
+  // 一時停止中（src が残っている）なら resumeAll で再開
+  const hasSrc = audios.some(a => a.src && a.src !== '');
+  if (hasSrc && currentIdx >= 0) {
+    await resumeAll();
+    return;
+  }
+
+  // 初回または完全停止後の新規スタート
+  userPaused = false;
+  await resumeAudioContext();
   isPlaying  = true;
   activeSlot = 0;
-  // stopAll() で element.volume が 0 になっている場合に備えて 1.0 に戻す
   audios.forEach(a => { a.volume = 1.0; });
   setSlotGain(0, 1);
   setSlotGain(1, 0);
@@ -1972,17 +2055,80 @@ async function togglePlay() {
   _btnPlay.textContent = '⏹ STOP';
   _btnPlay.classList.add('stop-mode');
   _btnPlay.setAttribute('aria-pressed', 'true');
-  document.getElementById('btnSkip').disabled = false;
-  document.getElementById('btnFull').disabled = false;
-  startWatchdog();               // 5秒間隔のヘルスチェックを開始
+  document.getElementById('btnSkip').disabled   = false;
+  document.getElementById('btnFull').disabled   = false;
+  document.getElementById('btnRepeat').disabled = false;
+  startWatchdog();
   playTrack(true);
 }
 
-function stopAll() {
+// ════════════════════════════════════════════════════════
+//  PAUSE (一時停止 — タイマー・状態を保持したまま音だけ止める)
+// ════════════════════════════════════════════════════════
+function pauseAll() {
   isPlaying  = false;
-  isFading   = false;
+  userPaused = true;
+  // 音だけ止める（src・タイマー・インデックスは残す）
+  audios.forEach(a => {
+    markInternalAudioOp();
+    try { a.pause(); } catch (_) {}
+  });
+  if (actx && masterGain) {
+    masterGain.gain.cancelScheduledValues(actx.currentTime);
+    masterGain.gain.setValueAtTime(masterVolume, actx.currentTime);
+  }
+  // wobble ノイズ消音
+  if (noiseGainNode && actx) {
+    noiseGainNode.gain.setTargetAtTime(0, actx.currentTime, 0.2);
+  }
+  const btnPlay = document.getElementById('btnPlay');
+  btnPlay.textContent = '▶ PLAY';
+  btnPlay.classList.remove('stop-mode');
+  btnPlay.setAttribute('aria-pressed', 'false');
+  document.getElementById('vinyl').classList.remove('spinning');
+  setMediaSessionPlaybackState('paused');
+}
+
+// ポーズ後の再開
+async function resumeAll() {
+  if (isPlaying) return;
+  userPaused = false;
+  isPlaying  = true;
+  await resumeAudioContext();
+  // 両スロットのうち src がある方を再生再開
+  audios.forEach(a => {
+    if (a.src) a.play().catch(() => {});
+  });
+  if (noiseGainNode && actx && wobbleIntensity > 0) {
+    // wobble が有効なら再生再開時にノイズも戻す（wobbleTick が担うが即時反映のため）
+  }
+  const btnPlay = document.getElementById('btnPlay');
+  btnPlay.textContent = '⏹ STOP';
+  btnPlay.classList.add('stop-mode');
+  btnPlay.setAttribute('aria-pressed', 'true');
+  document.getElementById('vinyl').classList.add('spinning');
+  setMediaSessionPlaybackState('playing');
+
+  // visibilitychange で非表示中に tickTimer が clearInterval されていた場合、
+  // 復帰時は !isPlaying でスキップされるため再起動されない。
+  // resumeAll 側で確実に再起動してプログレスバーを動かす。
+  if (isFullPlay) {
+    startFullCountdown();
+  } else if (isRepeatOne) {
+    startRepeatCountdown();
+  } else if (currentIdx >= 0) {
+    const remSec = Math.max(0, (slotEndTime - Date.now()) / 1000);
+    startCountdown(remSec, slotEndTime);
+  }
+}
+
+function stopAll() {
+  isPlaying   = false;
+  isFading    = false;
   stopWatchdog();              // ヘルスチェック停止
-  isFullPlay = false;
+  isFullPlay  = false;
+  isRepeatOne = false;
+  audios.forEach(a => { a.loop = false; });   // audio.loop を確実に解除
   operationId++;                 // 進行中のすべての非同期コールバックを無効化
   clearTimeout(fadeTimer);
   clearTimeout(preloadTimer);    // プリロードタイマーも止める
@@ -2046,9 +2192,11 @@ function stopAll() {
   btnPlay.textContent = '▶ PLAY';
   btnPlay.classList.remove('stop-mode');
   btnPlay.setAttribute('aria-pressed', 'false');
-  document.getElementById('btnSkip').disabled = true;
-  document.getElementById('btnFull').disabled = true;
+  document.getElementById('btnSkip').disabled   = true;
+  document.getElementById('btnFull').disabled   = true;
+  document.getElementById('btnRepeat').disabled = true;
   updateFullBtn();
+  updateRepeatBtn();
 
   // スリープタイマーが動作中なら停止と同時に解除（ユーザーが先に止めたケース）
   if (sleepTimerId || sleepDisplayTimer || sleepEndTime > 0) {
@@ -2066,6 +2214,209 @@ function stopAll() {
 
   setUIIdle();
   document.getElementById('vinyl').classList.remove('spinning');
+}
+
+// ════════════════════════════════════════════════════════
+//  REPEAT 1 MODE — 現在曲を頭から無限ループ
+//  audio.loop=true でブラウザ側に継ぎ目なしループを任せる。
+//  Skip / 特定曲クリックでリピート対象を差し替え、トグルOFFで
+//  通常のクロスフェード進行へ自然復帰する。
+// ════════════════════════════════════════════════════════
+function updateRepeatBtn() {
+  const btn = document.getElementById('btnRepeat');
+  if (!btn) return;
+  if (isRepeatOne) {
+    btn.textContent = '🔂 リピート解除';
+    btn.classList.add('repeat-active');
+    btn.setAttribute('aria-pressed', 'true');
+  } else {
+    btn.textContent = '🔂 リピート1';
+    btn.classList.remove('repeat-active');
+    btn.setAttribute('aria-pressed', 'false');
+  }
+}
+
+function setUIRepeatOne() {
+  document.getElementById('statusDot').className   = 'status-dot full';
+  document.getElementById('statusText').textContent = 'REPEAT 1';
+  document.getElementById('pillPlay').classList.remove('active');
+  document.getElementById('pillFade').classList.remove('fading-pill');
+  document.getElementById('pillFull').classList.remove('full-pill');
+  document.getElementById('progressFill').classList.add('full-mode');
+  document.getElementById('nextTitle').textContent = '🔂 同じ曲をリピート';
+}
+
+// リピート中のプログレスバー: audio.loop=true なので currentTime は
+// 0..duration の間で循環する。それをそのまま % に変換するだけ。
+function startRepeatCountdown() {
+  clearInterval(tickTimer);
+  const audio = audios[activeSlot];
+  const progressFill = document.getElementById('progressFill');
+  const progressBar  = document.getElementById('progressBar');
+  let lastAriaVal = -1;
+
+  tickTimer = setInterval(() => {
+    if (!isRepeatOne) { clearInterval(tickTimer); return; }
+    // 一時停止中はバーを更新しない
+    if (!isPlaying) return;
+    const total = isFinite(audio.duration) ? audio.duration : 1;
+    const pct   = total > 0 ? (audio.currentTime / total) * 100 : 0;
+    progressFill.style.width = pct + '%';
+    const ariaVal = Math.round(pct);
+    if (ariaVal !== lastAriaVal) {
+      progressBar.setAttribute('aria-valuenow', ariaVal);
+      lastAriaVal = ariaVal;
+    }
+  }, 80);
+}
+
+/**
+ * 指定曲を「最初から無限ループ」で再生する。
+ * リピート1モード内での Skip / 曲クリック / モード突入のすべてが本関数を経由する。
+ * 既存の playTrack を流用せず分離するのは、
+ *   - シーク位置をランダムにせず必ず 0 に固定
+ *   - フェードインを行わず即フル音量
+ *   - fadeTimer / preload を一切セットしない（次曲が存在しない）
+ * という挙動が通常モードと根本的に違うため。
+ */
+function playRepeatOneTrack(idx) {
+  if (!isPlaying || idx < 0 || idx >= files.length) return;
+
+  isFading   = false;
+  isFullPlay = false;
+  updateFullBtn();
+
+  const myOp = ++operationId;
+  clearTimeout(fadeTimer);
+  clearTimeout(preloadTimer);
+  if (_preloadMetaCleanup) { _preloadMetaCleanup(); _preloadMetaCleanup = null; }
+  if (_onFullEnded) { audios.forEach(a => a.removeEventListener('ended', _onFullEnded)); _onFullEnded = null; }
+  preloadedForIdx = -1;
+  clearInterval(xfadeTimer);
+  clearInterval(tickTimer);
+
+  currentIdx = idx;
+  nextIdx    = idx;   // リピート中の next は自分自身
+
+  const slot      = activeSlot;
+  const audio     = audios[slot];
+  const file      = files[currentIdx];
+  const otherSlot = 1 - slot;
+
+  // 反対側スロットを完全に止める（クロスフェード途中で入った場合の名残を一掃）
+  markInternalAudioOp();
+  try { audios[otherSlot].pause(); } catch(_) {}
+  clearSlotSrc(otherSlot);
+  setSlotGain(otherSlot, 0);
+  audios[otherSlot].loop = false;
+
+  setSlotGain(slot, 1);   // リピート1はフェードイン不要：即フル音量
+  highlightFile(currentIdx);
+  document.getElementById('nextTitle').textContent = '🔂 同じ曲をリピート';
+
+  setSlotSrc(slot, file);
+  audio.loop = true;
+
+  function onMeta() {
+    audio.removeEventListener('loadedmetadata', onMeta);
+    audio.removeEventListener('error',          onErr);
+    if (myOp !== operationId || !isPlaying || !isRepeatOne) return;
+
+    try { audio.currentTime = 0; } catch(_) {}
+    disablePitchPreservation(audio);
+
+    audio.play().then(() => {
+      if (myOp !== operationId || !isPlaying || !isRepeatOne) return;
+      document.getElementById('vinyl').classList.add('spinning');
+      setUIPlaying(file.name, true);   // 履歴追加 & MediaSession 反映
+      setUIRepeatOne();                 // ステータスを REPEAT 1 で上書き
+      startRepeatCountdown();
+    }).catch(err => {
+      if (myOp !== operationId || !isPlaying) return;
+      console.warn('Repeat play failed:', err);
+      if (actx && actx.state === 'suspended') actx.resume().catch(() => {});
+      setTimeout(() => {
+        if (myOp === operationId && isPlaying && isRepeatOne) playRepeatOneTrack(idx);
+      }, 500);
+    });
+  }
+
+  // 破損ファイル等で metadata が来ない場合は別の曲でリピート継続
+  function onErr(e) {
+    audio.removeEventListener('loadedmetadata', onMeta);
+    audio.removeEventListener('error',          onErr);
+    if (myOp !== operationId || !isPlaying) return;
+    console.warn('Repeat load error, trying another:', file?.name, e);
+    setTimeout(() => {
+      if (myOp === operationId && isPlaying && isRepeatOne) {
+        playRepeatOneTrack(randIdx(currentIdx));
+      }
+    }, 300);
+  }
+
+  audio.addEventListener('loadedmetadata', onMeta);
+  audio.addEventListener('error',          onErr);
+  audio.load();
+}
+
+function toggleRepeatOne() {
+  if (!isPlaying) return;
+
+  if (isRepeatOne) {
+    // ── 解除 → 通常のクロスフェード進行へ復帰 ──
+    isRepeatOne = false;
+    audios.forEach(a => { a.loop = false; });
+    updateRepeatBtn();
+    clearInterval(tickTimer);
+
+    const audio = audios[activeSlot];
+    const myOp  = ++operationId;
+
+    if (audio && isFinite(audio.duration)) {
+      const rem = Math.max(0, audio.duration - audio.currentTime);
+      nextIdx = randIdx(currentIdx);
+      document.getElementById('nextTitle').textContent =
+        files[nextIdx]?.name ? stripExt(files[nextIdx].name) : '—';
+
+      if (rem > fadeDuration + 1) {
+        // フェード圏外: 残り時間ぶんカウント → fadeDuration 残でクロスフェード
+        slotEndTime = Date.now() + rem * 1000;
+        startCountdown(rem, slotEndTime);
+        clearTimeout(fadeTimer);
+        fadeTimer = setTimeout(() => {
+          if (myOp !== operationId || !isPlaying || isFading || isFullPlay || isRepeatOne) return;
+          if (!shouldAdvancePlayback()) return;
+          startCrossfade(true);
+        }, Math.max(100, rem * 1000 - fadeDuration * 1000));
+      } else {
+        // 既にフェード圏内: 即クロスフェード
+        slotEndTime = Date.now() + (fadeDuration + playDuration) * 1000;
+        startCountdown(fadeDuration + playDuration, slotEndTime);
+        startCrossfade(true);
+      }
+
+      // 通常表示に戻す（曲名は維持、ステータスを PLAYING へ）
+      setUIPlaying(files[currentIdx]?.name ?? '', false);
+    } else {
+      // duration 不明: 仕切り直し
+      playTrack(false);
+    }
+  } else {
+    // ── 開始 ──
+    // クロスフェード中なら NOW PLAYING に出ている曲（inSlot=nextIdx）を対象に
+    const targetIdx = (isFading && nextIdx >= 0) ? nextIdx : currentIdx;
+
+    // フルモードと排他
+    if (isFullPlay) {
+      isFullPlay = false;
+      if (_onFullEnded) { audios.forEach(a => a.removeEventListener('ended', _onFullEnded)); _onFullEnded = null; }
+      updateFullBtn();
+    }
+
+    isRepeatOne = true;
+    updateRepeatBtn();
+    playRepeatOneTrack(targetIdx);
+  }
 }
 
 // ════════════════════════════════════════════════════════
@@ -2119,6 +2470,13 @@ function toggleFullPlay() {
     document.getElementById('nextTitle').textContent = files[nextIdx]?.name ? stripExt(files[nextIdx].name) : '—';
   } else {
     // フルモード開始
+    // リピート1と排他: リピート中ならまず解除する（audio.loop=true のままだと
+    // フルモードの ended リスナーが永遠に発火しない）
+    if (isRepeatOne) {
+      isRepeatOne = false;
+      audios.forEach(a => { a.loop = false; });
+      updateRepeatBtn();
+    }
     isFullPlay = true;
     isFading   = false;
     operationId++;               // 古い onMeta / fadeTimer 等を無効化
@@ -2202,6 +2560,8 @@ function startFullCountdown() {
 
   tickTimer = setInterval(() => {
     if (!isFullPlay) { clearInterval(tickTimer); return; }
+    // 一時停止中はバーを更新しない
+    if (!isPlaying) return;
     const rem   = isFinite(audio.duration) ? Math.max(0, audio.duration - audio.currentTime) : 0;
     const total = isFinite(audio.duration) ? audio.duration : 1;
     const pct   = total > 0 ? ((total - rem) / total) * 100 : 0;
@@ -2423,7 +2783,7 @@ function schedulePreload(targetIdx, myOp, inSlot) {
 //  ③ クロスフェードを開始
 // ════════════════════════════════════════════════════════
 function triggerNextSong() {
-  if (!isPlaying || isFading || isFullPlay) return;
+  if (!isPlaying || isFading || isFullPlay || isRepeatOne) return;
 
   // ① NOW PLAYINGを次の曲名に切り替え（カウント0の瞬間）
   const nextFile = files[nextIdx];
@@ -2443,7 +2803,7 @@ function triggerNextSong() {
 //  CROSSFADE
 // ════════════════════════════════════════════════════════
 function startCrossfade(alreadyBumped = false) {
-  if (!isPlaying || isFading) return;
+  if (!isPlaying || isFading || isRepeatOne) return;
   isFading = true;
   clearTimeout(fadeTimer);
   clearTimeout(preloadTimer);  // 進行中のプリロードタイマーを止める
@@ -2665,6 +3025,12 @@ function finishCrossfade(outSlot, inSlot) {
 function skipTrack() {
   if (!isPlaying) return;
 
+  // リピート1 中: 新しいランダム曲をリピート対象として頭から再生し直す
+  if (isRepeatOne) {
+    playRepeatOneTrack(randIdx(currentIdx));
+    return;
+  }
+
   // クロスフェード中でも受け付ける。
   // 進行中の xfadeTimer・loadedmetadata 待ちをすべて無効化してから
   // スロット状態を手動でリセットし、新しいクロスフェードを開始する。
@@ -2720,7 +3086,10 @@ function startCountdown(totalSec, anchorEndTime) {
   // カウント開始時点の終了時刻を固定して pct 計算の基準にする。
   // triggerNextSong が slotEndTime を上書きした後も "今のサイクルの全体幅" を
   // 保持するため、tick クロージャは startTime を独自に持つ。
-  const startTime = Date.now();
+  let startTime = Date.now();
+  // 一時停止中に実時間が経過しても elapsed が進まないよう、
+  // ポーズ開始時刻を記録して再開時に startTime を補正する。
+  let pausedAt = null;  // null = 再生中、Date.now() = ポーズ中
 
   // ── DOM ref キャッシュ ──
   // 80ms 間隔で getElementById が 5回×12.5Hz/秒 = 62回/秒 呼ばれていたのを
@@ -2740,6 +3109,17 @@ function startCountdown(totalSec, anchorEndTime) {
 
   function tick() {
     if (isFullPlay) { clearInterval(tickTimer); return; }
+    // 一時停止中はバーを更新しない（実時間が経過してもプログレスを進めない）
+    if (!isPlaying) {
+      // ポーズ開始時刻を記録（初回のみ）
+      if (pausedAt === null) pausedAt = Date.now();
+      return;
+    }
+    // 再開直後: ポーズ中に経過した時間を startTime に加算してバーの跳びを防ぐ
+    if (pausedAt !== null) {
+      startTime += Date.now() - pausedAt;
+      pausedAt = null;
+    }
     const rem     = Math.max(0, (slotEndTime - Date.now()) / 1000);
     // 経過時間をスロット開始から測り、終了時刻との差分で全体幅を動的に求める。
     // これにより triggerNextSong が slotEndTime をリセットしても
@@ -2788,7 +3168,8 @@ function setUIPlaying(title, addHistoryFlag = true) {
 
   if (addHistoryFlag) addToHistory(title);
 
-  if (!isFullPlay) {
+  // REPEAT 1 中は setUIRepeatOne がステータスを上書きするためここでは触らない
+  if (!isFullPlay && !isRepeatOne) {
     document.getElementById('statusDot').className   = 'status-dot on';
     document.getElementById('statusText').textContent = 'PLAYING';
     document.getElementById('pillPlay').classList.add('active');
@@ -2930,6 +3311,8 @@ function setUIIdle() {
     // UI タイマーを再開して現在位置を即時反映
     if (isFullPlay) {
       startFullCountdown();
+    } else if (isRepeatOne) {
+      startRepeatCountdown();
     } else {
       const remSec = Math.max(0, (slotEndTime - Date.now()) / 1000);
       startCountdown(remSec, slotEndTime);
@@ -2997,14 +3380,15 @@ function setUIIdle() {
       pauseStartMs = 0;
       slotEndTime += pausedMs;
 
-      // 通常再生中（クロスフェードでもフルでもない）のみ再スケジュール対象。
+      // 通常再生中（クロスフェードでもフルでもリピート1でもない）のみ再スケジュール対象。
       // クロスフェード中は xfadeTimer が短時間で済むので無視、フルは ended で進む。
-      if (!isFading && !isFullPlay) {
+      // リピート1は fadeTimer を使わないため、不要なタイマーをセットしない。
+      if (!isFading && !isFullPlay && !isRepeatOne) {
         clearTimeout(fadeTimer);
         const opAtResume = operationId;
         const remMs = Math.max(100, slotEndTime - Date.now());
         fadeTimer = setTimeout(() => {
-          if (opAtResume !== operationId || !isPlaying || isFading || isFullPlay) return;
+          if (opAtResume !== operationId || !isPlaying || isFading || isFullPlay || isRepeatOne) return;
           if (!shouldAdvancePlayback()) return;
           triggerNextSong();
         }, remMs);
@@ -3209,31 +3593,54 @@ document.addEventListener('keydown', e => {
   // IME 変換中は無視
   if (e.isComposing || e.keyCode === 229) return;
 
+  // ── 修飾キー付きはブラウザ標準ショートカットに譲る ──
+  // 以前は素通しで、Ctrl+R（再読み込み）が KeyR にマッチして toggleRepeatOne() を誤発火、
+  // Ctrl+F（検索）が KeyF にマッチして toggleFullPlay() を誤発火していた。
+  // Slash は元々 !ctrl && !meta && !alt をケース内で確認しているので統一して早期 return。
+  const hasModifier = e.ctrlKey || e.metaKey || e.altKey;
+
   switch (e.code) {
-    case 'Space':
+    case 'Space': {
+      // Space をグローバル再生切替として扱うのは「フォーカス無し（body）」または
+      // 「PLAY ボタンに既にフォーカス」のときだけ。それ以外（Sleep ボタン、フォルダ、
+      // ファイルリスト li, 音量ラベル等）は、その要素自身の Space 起動を尊重する。
+      //
+      // 以前は blur() + togglePlay() で奪っていたが、これは
+      //   ・WCAG 2.1.1: フォーカス中のボタンを Space で起動できる必要
+      //   ・ファイルリスト li で「Space → 即 stop」の二重発火バグ
+      // という二重の問題を起こしていた。
+      //
+      // Shift+Space は伝統的に「上スクロール」のキーバインドなので尊重する。
+      if (hasModifier || e.shiftKey) return;
+      const ae = document.activeElement;
+      const btnPlay = document.getElementById('btnPlay');
+      const isGlobal = !ae || ae === document.body || ae === btnPlay;
+      if (!isGlobal) return;          // フォーカス中の要素に Space を渡す
       e.preventDefault();
-      // keydown の preventDefault() でスクロールを止めつつ、
-      // blur() でフォーカスを body に移してから togglePlay を呼ぶ。
-      // 一部ブラウザは keyup で合成 click を生成するため、
-      // keyup でも Space を preventDefault する（下の keyup ハンドラ参照）。
-      if (document.activeElement && document.activeElement !== document.body) {
-        document.activeElement.blur();
-      }
-      if (!document.getElementById('btnPlay').disabled) togglePlay();
+      if (!btnPlay.disabled) togglePlay();
       break;
+    }
     case 'ArrowRight':
+      if (hasModifier) return;
       e.preventDefault();
       if (!document.getElementById('btnSkip').disabled) skipTrack();
       break;
     case 'KeyF':
+      if (hasModifier) return;
       if (!document.getElementById('btnFull').disabled) toggleFullPlay();
       break;
+    case 'KeyR':
+      if (hasModifier) return;
+      if (!document.getElementById('btnRepeat').disabled) toggleRepeatOne();
+      break;
     case 'KeyM':
+      if (hasModifier) return;
       toggleMute();
       break;
     case 'Slash':
-      // "/" で検索フォーカス（モディファイア無し時のみ）
-      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+      // "/" で検索フォーカス（修飾キー無しのときのみ）
+      if (hasModifier) return;
+      {
         const inp = document.getElementById('searchInput');
         if (inp && inp.offsetParent !== null) {
           e.preventDefault();
@@ -3245,13 +3652,17 @@ document.addEventListener('keydown', e => {
   }
 });
 
-// Space の keyup でも preventDefault して合成クリックを完全に封じる。
-// blur() 後にフォーカスが body にあれば合成 click は届かないが、
-// blur() が失敗した場合（shadow DOM 内のボタン等）の保険として追加する。
+// Space の keyup 側も、keydown と同じ判定で「グローバル扱いするとき」だけ封じる。
+// フォーカスが任意のボタン上にあるときは Space → 合成 click を通すことで
+// WCAG 2.1.1 (キーボード操作) を満たし、Sleep ボタン等を起動できるようにする。
 document.addEventListener('keyup', e => {
-  if (e.code === 'Space' && e.target.tagName !== 'INPUT') {
-    e.preventDefault();
-  }
+  if (e.code !== 'Space') return;
+  const tag = e.target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+  const ae = document.activeElement;
+  const btnPlay = document.getElementById('btnPlay');
+  const isGlobal = !ae || ae === document.body || ae === btnPlay;
+  if (isGlobal) e.preventDefault();
 });
 
 // ════════════════════════════════════════════════════════
