@@ -26,7 +26,7 @@
   --neon-glow: rgba(0,255,238,0.5);
   --cream:     #d0f7f5;
   --dim:       #2a8a88;
-  --dim2:      #1a5a5a;
+  --dim2:      #3d8a85;
   --green:     #3dffe0;
   --green-glow:rgba(61,255,224,0.4);
   --red:       #ff4455;
@@ -186,7 +186,7 @@ body {
 }
 
 .phase-label {
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 2px;
   color: var(--dim);
   margin-top: 6px;
@@ -200,7 +200,7 @@ body {
   border-radius: 10px;
   background: var(--amber-lo);
   color: var(--amber-dim);
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 2px;
   transition: all 0.3s;
 }
@@ -282,6 +282,16 @@ body {
   box-shadow: 0 0 14px rgba(0,229,204,0.2);
 }
 .btn:active:not(:disabled) { transform: scale(0.97); }
+/* キーボード操作時のみフォーカスリングを出す（マウスクリックでは出さない） */
+.btn:focus-visible,
+.sleep-btn:focus-visible,
+#restoreBtn:focus-visible,
+#volLabel:focus-visible,
+#searchInput:focus-visible {
+  outline: 2px solid var(--neon);
+  outline-offset: 2px;
+  box-shadow: 0 0 12px var(--neon-glow);
+}
 
 .btn.primary {
   border-color: var(--amber);
@@ -639,7 +649,10 @@ input[type=range]::-moz-range-thumb {
 .sleep-btn:active { transform: scale(0.95); }
 .setting-val.sleep-val { color: var(--neon); min-width: 50px; font-size: 11px; }
 
-/* ─── VOLUME LABEL (clickable for mute) ─── */
+/* ─── VOLUME LABEL (clickable for mute) ───
+   <button> で実装することで keyboard tab/Enter/Space 操作と
+   スクリーンリーダー対応を獲得する。デフォルトのボタン外観は
+   全てリセットして .setting-label と同じ見た目に揃える。 */
 .vol-label-clickable {
   cursor: pointer;
   position: relative;
@@ -647,6 +660,17 @@ input[type=range]::-moz-range-thumb {
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
+  /* button reset */
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
 }
 .vol-label-clickable::before {
   content: '🔊 ';
@@ -689,6 +713,26 @@ input[type=range]::-moz-range-thumb {
   min-width: 42px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+/* ─── REDUCED MOTION: 前庭障害対応 ───
+   ビニル回転・バナー脈動・status-dot blink・active時の scale など
+   ユーザが視覚的揺れを嫌うと宣言した場合は全て止める。
+   transition は色等のみのため残してもよいが、安全側で 0.01ms に短縮。 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .vinyl, .vinyl.spinning { animation: none !important; }
+  #restoreBanner { animation: none !important; }
+  .status-dot.on, .status-dot.xfade { animation: none !important; }
+  .btn:active:not(:disabled),
+  .sleep-btn:active,
+  #restoreBtn:active { transform: none !important; }
+  input[type=range]::-webkit-slider-thumb:hover { transform: none !important; }
 }
 
 /* ─── TOUCH DEVICES: prevent sticky hover ─── */
@@ -797,16 +841,16 @@ input[type=range]::-moz-range-thumb {
 
   <!-- NOW PLAYING -->
   <div class="now-playing">
-    <div class="np-label">▶ NOW PLAYING</div>
-    <div class="np-title idle" id="npTitle">— フォルダを選択して再生を開始してください —</div>
+    <div class="np-label" id="npLabel">▶ NOW PLAYING</div>
+    <div class="np-title idle" id="npTitle" aria-live="polite" aria-atomic="true" aria-labelledby="npLabel">— フォルダを選択して再生を開始してください —</div>
 
     <div class="progress-row">
-      <div class="progress-bg">
+      <div class="progress-bg" id="progressBar" role="progressbar" aria-label="再生進捗" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
         <div class="progress-fill" id="progressFill"></div>
       </div>
     </div>
 
-    <div class="phase-label">
+    <div class="phase-label" aria-hidden="true">
       <span class="phase-pill" id="pillPlay">PLAYING</span>
       <span>→</span>
       <span class="phase-pill" id="pillFade">CROSSFADE</span>
@@ -830,9 +874,9 @@ input[type=range]::-moz-range-thumb {
   <!-- CONTROLS -->
   <div class="controls">
     <button class="btn" id="btnFolder">📁 フォルダ選択</button>
-    <button class="btn primary" id="btnPlay" disabled onclick="togglePlay()">▶ PLAY</button>
+    <button class="btn primary" id="btnPlay" disabled aria-pressed="false" onclick="togglePlay()">▶ PLAY</button>
     <button class="btn" id="btnSkip" disabled onclick="skipTrack()">⏭ スキップ</button>
-    <button class="btn full-btn" id="btnFull" disabled onclick="toggleFullPlay()">♾ フルで聴く</button>
+    <button class="btn full-btn" id="btnFull" disabled aria-pressed="false" onclick="toggleFullPlay()">♾ フルで聴く</button>
   </div>
 
   <!-- RESTORE BANNER -->
@@ -862,7 +906,7 @@ input[type=range]::-moz-range-thumb {
       <div class="setting-val" id="valFade">8s</div>
     </div>
     <div class="setting-row">
-      <div class="setting-label vol-label-clickable" id="volLabel" title="クリックでミュート (M)">ボリューム</div>
+      <button type="button" class="setting-label vol-label-clickable" id="volLabel" title="クリックでミュート (M)" aria-pressed="false" aria-label="ミュート切替（M キーでも可）">ボリューム</button>
       <input type="range" id="sliderVol" min="0" max="100" value="80" oninput="onVolumeChange()">
       <div class="setting-val vol-val" id="valVol">80%</div>
     </div>
@@ -1484,13 +1528,36 @@ function hideBanner() {
 
 function showBanner(folderName, onRestoreClick) {
   const short = folderName.length > 28 ? folderName.slice(0, 28) + '…' : folderName;
+  document.getElementById('restoreTitle').textContent = '▶ 前回のフォルダ';
   document.getElementById('restoreInfo').textContent = `「${short}」を検出しました`;
-  document.getElementById('restoreBanner').style.display = 'flex';
+  const banner = document.getElementById('restoreBanner');
+  banner.style.display = 'flex';
+  banner.removeAttribute('role');  // 通常バナーは alert ロール不要
   // ボタンを複製してリスナーをリセット
   const oldBtn = document.getElementById('restoreBtn');
   const newBtn = oldBtn.cloneNode(true);
+  newBtn.textContent = '↩ ワンクリックで復元';
   oldBtn.parentNode.replaceChild(newBtn, oldBtn);
   newBtn.addEventListener('click', onRestoreClick);
+}
+
+// alert() の代替：既存バナーをエラー表示に流用して非破壊通知する。
+// onRetry を渡せば「再選択」クリックで元のフロー (selectFolder 等) に戻れる。
+function showErrorBanner(message, onRetry) {
+  document.getElementById('restoreTitle').textContent = '⚠ 復元に失敗';
+  document.getElementById('restoreInfo').textContent = message;
+  const banner = document.getElementById('restoreBanner');
+  banner.style.display = 'flex';
+  // role=alert を付けてスクリーンリーダーに即時通知する
+  banner.setAttribute('role', 'alert');
+  const oldBtn = document.getElementById('restoreBtn');
+  const newBtn = oldBtn.cloneNode(true);
+  newBtn.textContent = '↻ フォルダを選び直す';
+  oldBtn.parentNode.replaceChild(newBtn, oldBtn);
+  newBtn.addEventListener('click', () => {
+    hideBanner();
+    if (typeof onRetry === 'function') onRetry();
+  });
 }
 
 async function tryRestoreFolder() {
@@ -1534,14 +1601,15 @@ async function restoreWithPermission(handle) {
       await loadFilesFromHandle(handle);
       updateFolderBtn(handle.name);
       safeLSSet('lastFolderName', handle.name);
+      hideBanner();
     } else {
-      alert('フォルダへのアクセスが拒否されました。「フォルダ選択」ボタンから再選択してください。');
+      // 非破壊バナー：UI を止めずユーザの次操作を待つ
+      showErrorBanner('フォルダへのアクセスが拒否されました。', selectFolder);
     }
   } catch(e) {
     console.warn('Permission request failed:', e);
-    alert('フォルダの復元に失敗しました。「フォルダ選択」ボタンから再選択してください。');
+    showErrorBanner('フォルダの復元に失敗しました。', selectFolder);
   }
-  hideBanner();
 }
 
 function renderFileList() {
@@ -1604,8 +1672,10 @@ async function playSpecificTrack(idx) {
     activeSlot = 0;
     // stopAll() で element.volume が 0 になっている場合に備えて 1.0 に戻す
     audios.forEach(a => { a.volume = 1.0; });
-    document.getElementById('btnPlay').textContent = '⏹ STOP';
-    document.getElementById('btnPlay').classList.add('stop-mode');
+    const _bp = document.getElementById('btnPlay');
+    _bp.textContent = '⏹ STOP';
+    _bp.classList.add('stop-mode');
+    _bp.setAttribute('aria-pressed', 'true');
     document.getElementById('btnSkip').disabled = false;
     document.getElementById('btnFull').disabled = false;
 
@@ -1780,7 +1850,11 @@ function onVolumeChange() {
   debouncedSave('jukebox_vol', document.getElementById('sliderVol').value);
   // ミュート表示の同期（スライダーを手動で 0 へ動かしたケースもラベルへ反映）
   const label = document.getElementById('volLabel');
-  if (label) label.classList.toggle('muted', masterVolume === 0);
+  if (label) {
+    const muted = masterVolume === 0;
+    label.classList.toggle('muted', muted);
+    label.setAttribute('aria-pressed', muted ? 'true' : 'false');
+  }
 }
 
 // ════════════════════════════════════════════════════════
@@ -1833,8 +1907,10 @@ async function togglePlay() {
   audios.forEach(a => { a.volume = 1.0; });
   setSlotGain(0, 1);
   setSlotGain(1, 0);
-  document.getElementById('btnPlay').textContent = '⏹ STOP';
-  document.getElementById('btnPlay').classList.add('stop-mode');
+  const _btnPlay = document.getElementById('btnPlay');
+  _btnPlay.textContent = '⏹ STOP';
+  _btnPlay.classList.add('stop-mode');
+  _btnPlay.setAttribute('aria-pressed', 'true');
   document.getElementById('btnSkip').disabled = false;
   document.getElementById('btnFull').disabled = false;
   startWatchdog();               // 5秒間隔のヘルスチェックを開始
@@ -1908,6 +1984,7 @@ function stopAll() {
   const btnPlay = document.getElementById('btnPlay');
   btnPlay.textContent = '▶ PLAY';
   btnPlay.classList.remove('stop-mode');
+  btnPlay.setAttribute('aria-pressed', 'false');
   document.getElementById('btnSkip').disabled = true;
   document.getElementById('btnFull').disabled = true;
   updateFullBtn();
@@ -2045,9 +2122,11 @@ function updateFullBtn() {
   if (isFullPlay) {
     btn.textContent = '⏱ ノーマルへ戻す';
     btn.classList.add('full-active');
+    btn.setAttribute('aria-pressed', 'true');
   } else {
     btn.textContent = '♾ フルで聴く';
     btn.classList.remove('full-active');
+    btn.setAttribute('aria-pressed', 'false');
   }
 }
 
@@ -2055,13 +2134,23 @@ function startFullCountdown() {
   clearInterval(tickTimer);
   const audio = audios[activeSlot];
 
+  // DOM ref キャッシュ（startCountdown と同様の理由）
+  const progressFill = document.getElementById('progressFill');
+  const progressBar  = document.getElementById('progressBar');
+  let lastAriaVal = -1;
+
   tickTimer = setInterval(() => {
     if (!isFullPlay) { clearInterval(tickTimer); return; }
     const rem   = isFinite(audio.duration) ? Math.max(0, audio.duration - audio.currentTime) : 0;
     const total = isFinite(audio.duration) ? audio.duration : 1;
     const pct   = total > 0 ? ((total - rem) / total) * 100 : 0;
 
-    document.getElementById('progressFill').style.width = pct + '%';
+    progressFill.style.width = pct + '%';
+    const ariaVal = Math.round(pct);
+    if (ariaVal !== lastAriaVal) {
+      progressBar.setAttribute('aria-valuenow', ariaVal);
+      lastAriaVal = ariaVal;
+    }
 
     if (rem <= 0) clearInterval(tickTimer);
   }, 80);
@@ -2572,6 +2661,22 @@ function startCountdown(totalSec, anchorEndTime) {
   // 保持するため、tick クロージャは startTime を独自に持つ。
   const startTime = Date.now();
 
+  // ── DOM ref キャッシュ ──
+  // 80ms 間隔で getElementById が 5回×12.5Hz/秒 = 62回/秒 呼ばれていたのを
+  // クロージャに閉じ込めて一度だけ取得する。tick あたりの DOM lookup は 0 回。
+  const progressFill = document.getElementById('progressFill');
+  const progressBar  = document.getElementById('progressBar');
+  const statusDot    = document.getElementById('statusDot');
+  const statusText   = document.getElementById('statusText');
+  const pillPlay     = document.getElementById('pillPlay');
+  const pillFade     = document.getElementById('pillFade');
+
+  // full-mode クラスは tick で毎回 remove していたが、サイクル開始時に一度で十分。
+  progressFill.classList.remove('full-mode');
+
+  let lastAriaVal = -1;       // aria-valuenow の重複書込み抑止
+  let prevFading  = null;     // phase pill の重複書込み抑止
+
   function tick() {
     if (isFullPlay) { clearInterval(tickTimer); return; }
     const rem     = Math.max(0, (slotEndTime - Date.now()) / 1000);
@@ -2582,18 +2687,27 @@ function startCountdown(totalSec, anchorEndTime) {
     const spanSec  = elapsed + rem;                    // 現時点で見える全体幅
     const pct      = spanSec > 0 ? (elapsed / spanSec) * 100 : 0;
 
-    document.getElementById('progressFill').style.width = pct + '%';
-    document.getElementById('progressFill').classList.remove('full-mode');
+    progressFill.style.width = pct + '%';
 
-    // クロスフェード中かどうかで表示を切り替え
-    if (isFading) {
-      document.getElementById('statusDot').className   = 'status-dot xfade';
-      document.getElementById('statusText').textContent = 'CROSSFADING...';
-      document.getElementById('pillPlay').classList.remove('active');
-      document.getElementById('pillFade').classList.add('fading-pill');
-    } else {
-      document.getElementById('pillPlay').classList.add('active');
-      document.getElementById('pillFade').classList.remove('fading-pill');
+    // スクリーンリーダー向け aria-valuenow は整数で十分（書込頻度を下げる）
+    const ariaVal = Math.round(pct);
+    if (ariaVal !== lastAriaVal) {
+      progressBar.setAttribute('aria-valuenow', ariaVal);
+      lastAriaVal = ariaVal;
+    }
+
+    // クロスフェード中かどうかで表示を切り替え（状態遷移時のみ DOM 書込み）
+    if (isFading !== prevFading) {
+      if (isFading) {
+        statusDot.className   = 'status-dot xfade';
+        statusText.textContent = 'CROSSFADING...';
+        pillPlay.classList.remove('active');
+        pillFade.classList.add('fading-pill');
+      } else {
+        pillPlay.classList.add('active');
+        pillFade.classList.remove('fading-pill');
+      }
+      prevFading = isFading;
     }
 
     if (rem <= 0) clearInterval(tickTimer);
@@ -2648,6 +2762,7 @@ function setUIIdle() {
 
   document.getElementById('progressFill').style.width = '0%';
   document.getElementById('progressFill').classList.remove('full-mode');
+  document.getElementById('progressBar').setAttribute('aria-valuenow', '0');
   document.getElementById('nextTitle').textContent     = '—';
   document.getElementById('statusDot').className       = 'status-dot';
   document.getElementById('statusText').textContent    = 'STOPPED';
@@ -2926,12 +3041,12 @@ function toggleMute() {
     // ミュート ON
     _preMuteVol = current / 100;
     slider.value = 0;
-    if (label) label.classList.add('muted');
+    if (label) { label.classList.add('muted'); label.setAttribute('aria-pressed', 'true'); }
   } else {
     // ミュート解除
     const restore = _preMuteVol > 0 ? _preMuteVol : 0.8;
     slider.value = Math.round(restore * 100);
-    if (label) label.classList.remove('muted');
+    if (label) { label.classList.remove('muted'); label.setAttribute('aria-pressed', 'false'); }
   }
   onVolumeChange();
 }
@@ -3026,10 +3141,18 @@ document.querySelectorAll('.sleep-btn').forEach(b => {
 (function bindSearch() {
   const inp = document.getElementById('searchInput');
   if (!inp) return;
-  inp.addEventListener('input', applySearchFilter);
-  // Esc でクリア
+  // ── デバウンス ──
+  // 大量ファイル時の毎キーストローク全件フィルタを抑制。
+  // 120ms はタイピング感を損なわない上限ライン（先頭タイプ後の遅延感が出ない）。
+  let _searchDebounce = null;
+  inp.addEventListener('input', () => {
+    clearTimeout(_searchDebounce);
+    _searchDebounce = setTimeout(applySearchFilter, 120);
+  });
+  // Esc でクリア（こちらは即時反映）
   inp.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
+      clearTimeout(_searchDebounce);
       inp.value = '';
       applySearchFilter();
       inp.blur();
