@@ -450,7 +450,11 @@ body {
   letter-spacing: 1px;
   width: 130px;
   flex-shrink: 0;
+  /* label要素に置き換わっても div と同じ感触を保つ（IビームではなくデフォルトUA矢印） */
+  cursor: default;
 }
+/* <label for=slider> はクリック→スライダーへフォーカスが移るためポインタにする */
+label.setting-label[for] { cursor: pointer; }
 
 input[type=range] {
   flex: 1;
@@ -622,8 +626,10 @@ input[type=range]::-moz-range-thumb {
 .sleep-btn {
   flex: 1;
   min-width: 38px;
-  min-height: 32px;
-  padding: 6px 8px;
+  /* WCAG 2.5.5 Target Size: 44px に近づけてタップ精度を上げる
+     （元 32px は指タップで誤爆しやすかった） */
+  min-height: 40px;
+  padding: 9px 8px;
   border: 1px solid var(--amber-lo);
   background: transparent;
   color: var(--amber-dim);
@@ -822,7 +828,8 @@ input[type=range]::-moz-range-thumb {
   .footer .kbd-hint { display: none; }
 
   .sleep-buttons { gap: 4px; }
-  .sleep-btn { font-size: 9px; min-width: 32px; padding: 6px 4px; letter-spacing: 0; }
+  /* モバイルもタップターゲットを 38px 以上に維持 */
+  .sleep-btn { font-size: 9px; min-width: 32px; min-height: 38px; padding: 9px 4px; letter-spacing: 0; }
 }
 </style>
 </head>
@@ -836,7 +843,7 @@ input[type=range]::-moz-range-thumb {
       <h1>L-BOX</h1>
       <div class="header-sub">Random Music Player</div>
     </div>
-    <div class="vinyl" id="vinyl"></div>
+    <div class="vinyl" id="vinyl" aria-hidden="true"></div>
   </div>
 
   <!-- NOW PLAYING -->
@@ -896,22 +903,22 @@ input[type=range]::-moz-range-thumb {
       <div class="total-badge">合計 1枠 = <span id="totalBadge">20s</span></div>
     </div>
     <div class="setting-row">
-      <div class="setting-label">再生時間 (solo)</div>
+      <label class="setting-label" for="sliderPlay">再生時間 (solo)</label>
       <input type="range" id="sliderPlay" min="5" max="120" value="12" oninput="onSettingChange()">
       <div class="setting-val" id="valPlay">12s</div>
     </div>
     <div class="setting-row">
-      <div class="setting-label">クロスフェード</div>
+      <label class="setting-label" for="sliderFade">クロスフェード</label>
       <input type="range" id="sliderFade" min="1" max="30" value="8" oninput="onSettingChange()">
       <div class="setting-val" id="valFade">8s</div>
     </div>
     <div class="setting-row">
       <button type="button" class="setting-label vol-label-clickable" id="volLabel" title="クリックでミュート (M)" aria-pressed="false" aria-label="ミュート切替（M キーでも可）">ボリューム</button>
-      <input type="range" id="sliderVol" min="0" max="100" value="80" oninput="onVolumeChange()">
+      <input type="range" id="sliderVol" min="0" max="100" value="80" oninput="onVolumeChange()" aria-label="ボリューム">
       <div class="setting-val vol-val" id="valVol">80%</div>
     </div>
     <div class="setting-row">
-      <div class="setting-label">揺らぎ ✦</div>
+      <label class="setting-label" for="sliderWobble">揺らぎ ✦</label>
       <input type="range" id="sliderWobble" min="0" max="100" value="0" oninput="onWobbleChange()">
       <div class="wobble-val-wrap">
         <div class="setting-val wobble-val" id="valWobble">0</div>
@@ -919,13 +926,13 @@ input[type=range]::-moz-range-thumb {
       </div>
     </div>
     <div class="setting-row sleep-row">
-      <div class="setting-label">⏰ スリープ</div>
-      <div class="sleep-buttons" id="sleepButtons">
-        <button type="button" class="sleep-btn active" data-min="0">OFF</button>
-        <button type="button" class="sleep-btn" data-min="15">15m</button>
-        <button type="button" class="sleep-btn" data-min="30">30m</button>
-        <button type="button" class="sleep-btn" data-min="60">60m</button>
-        <button type="button" class="sleep-btn" data-min="90">90m</button>
+      <div class="setting-label" id="sleepLabel">⏰ スリープ</div>
+      <div class="sleep-buttons" id="sleepButtons" role="group" aria-labelledby="sleepLabel">
+        <button type="button" class="sleep-btn active" data-min="0" aria-label="スリープタイマー解除">OFF</button>
+        <button type="button" class="sleep-btn" data-min="15" aria-label="15分後にスリープ">15m</button>
+        <button type="button" class="sleep-btn" data-min="30" aria-label="30分後にスリープ">30m</button>
+        <button type="button" class="sleep-btn" data-min="60" aria-label="60分後にスリープ">60m</button>
+        <button type="button" class="sleep-btn" data-min="90" aria-label="90分後にスリープ">90m</button>
       </div>
       <div class="setting-val sleep-val" id="valSleep">—</div>
     </div>
@@ -939,7 +946,7 @@ input[type=range]::-moz-range-thumb {
 
   <!-- SEARCH -->
   <div class="search-wrap" id="searchWrap" style="display:none">
-    <input type="search" id="searchInput" placeholder="🔍 曲を検索..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    <input type="search" id="searchInput" placeholder="🔍 曲を検索..." aria-label="曲を検索（／キーでフォーカス、Esc でクリア）" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
     <span class="search-count" id="searchCount"></span>
   </div>
 
@@ -1275,6 +1282,29 @@ function initAudioContext() {
   if (actx) return;
   try {
     actx = new (window.AudioContext || window.webkitAudioContext)();
+
+    // ── statechange リスナーは actx 生成と同時に登録 ──
+    //   以前は setupAutoResume 内で 200ms ポーリングで actx の出現を待っていたが、
+    //   ユーザーが一度も再生しないとポーリングが永続して電池を浪費するため、
+    //   生成時点で直接 addEventListener する方式へ変更した。
+    try {
+      actx.addEventListener('statechange', () => {
+        if (!actx) return;
+        // suspended へ落ちた: 再生中なら能動的に resume を試みる
+        if (actx.state === 'suspended' && isPlaying && !userPaused) {
+          actx.resume().catch(() => {});
+          return;
+        }
+        // running 復帰: audio 要素が paused になっているケースをカバー
+        // (a.play() は 'play' イベントで onExternalPlay を発火し、
+        //  pauseStartMs / wasPlayingBeforeInterrupt をクリーンアップしてくれる)
+        if (actx.state === 'running' && isPlaying && !userPaused) {
+          audios.forEach(a => {
+            if (a.src && a.paused) a.play().catch(() => {});
+          });
+        }
+      });
+    } catch(_) {}
 
     const srcA = actx.createMediaElementSource(audioA);
     const srcB = actx.createMediaElementSource(audioB);
@@ -1615,14 +1645,40 @@ async function restoreWithPermission(handle) {
 function renderFileList() {
   const ul = document.getElementById('fileList');
   ul.innerHTML = '';
-  files.forEach((f, i) => {
-    const li = document.createElement('li');
-    li.id = 'fi-' + i;
-    li.textContent = stripExt(f.name);
-    li.title = f.name;
-    li.addEventListener('click', () => playSpecificTrack(i));
-    ul.appendChild(li);
-  });
+
+  if (files.length === 0) {
+    // 対応形式ゼロ時の説明メッセージ（無言で disabled だと原因が伝わらない）
+    const msg = document.createElement('li');
+    msg.className = 'filelist-empty-msg';
+    msg.textContent = '対応音源が見つかりませんでした（mp3 / wav / ogg / flac / aac / m4a / opus / weba / wma）';
+    msg.style.cssText = 'color: var(--dim2); padding: 8px 4px; cursor: default; font-style: italic; white-space: normal;';
+    ul.appendChild(msg);
+  } else {
+    // ── DocumentFragment で 1 回のリフローにまとめる ──
+    //   曲数が多い (数百〜) ライブラリで appendChild N 回によるレイアウトコストを削減。
+    const frag = document.createDocumentFragment();
+    files.forEach((f, i) => {
+      const li = document.createElement('li');
+      li.id = 'fi-' + i;
+      li.textContent = stripExt(f.name);
+      li.title = f.name;
+      // ── キーボード操作対応 (WCAG 2.1.1) ──
+      // tabindex=0 で Tab 到達可、role=button で SR がボタンとして読む、
+      // keydown で Enter/Space を click と同等に扱う。
+      li.tabIndex = 0;
+      li.setAttribute('role', 'button');
+      li.addEventListener('click', () => playSpecificTrack(i));
+      li.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          playSpecificTrack(i);
+        }
+      });
+      frag.appendChild(li);
+    });
+    ul.appendChild(frag);
+  }
+
   // 検索ボックスの表示 / フィルタ再適用
   const searchWrap = document.getElementById('searchWrap');
   if (searchWrap) searchWrap.style.display = files.length > 0 ? 'flex' : 'none';
@@ -1639,6 +1695,11 @@ function applySearchFilter() {
   let visible = 0;
   const lis = document.querySelectorAll('.filelist li');
   lis.forEach((li, i) => {
+    // 空フォルダ用プレースホルダ li は検索対象外で常に表示
+    if (li.classList.contains('filelist-empty-msg')) {
+      li.style.display = '';
+      return;
+    }
     if (!q) {
       li.style.display = '';
       visible++;
@@ -2959,31 +3020,9 @@ function setUIIdle() {
     a.addEventListener('play',  onExternalPlay);
   });
 
-  // AudioContext の statechange イベントでも拾う
-  // （actx は initAudioContext 後に存在するのでポーリングで後付け登録）
-  let acStateWatcher = setInterval(() => {
-    if (!actx) return;
-    clearInterval(acStateWatcher);
-    actx.addEventListener('statechange', () => {
-      if (!actx) return;
-      // ── suspended へ落ちた: 再生中なら能動的に resume を試みる ──
-      // 画面オフ中のシステム省電力で AudioContext が勝手に suspend されると
-      // audio はミュート状態になる。直近のユーザー操作が必要な実装もあるが
-      // 大抵のブラウザでは resume() が成功する。失敗しても害はない。
-      if (actx.state === 'suspended' && isPlaying && !userPaused) {
-        actx.resume().catch(() => {});
-        return;
-      }
-      // ── running 復帰: audio 要素が paused になっているケースをカバー ──
-      // wasPlayingBeforeInterrupt フラグの有無に関わらず、確実に再生し直す。
-      if (actx.state === 'running' && isPlaying && !userPaused) {
-        wasPlayingBeforeInterrupt = false;
-        audios.forEach(a => {
-          if (a.src && a.paused) a.play().catch(() => {});
-        });
-      }
-    });
-  }, 200);
+  // AudioContext の statechange リスナーは initAudioContext() 内で
+  // actx 生成と同時に登録するため、ここでのポーリング登録は廃止。
+  // （旧実装は actx が一度も作られないと setInterval が永続して電池を浪費していた）
 
   // ── audio.error: 再生中の致命的エラーから自動復旧 ──
   // ファイル破損・ネットワーク中断・デコード失敗等でいきなり止まったときに
