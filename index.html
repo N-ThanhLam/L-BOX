@@ -332,6 +332,26 @@ body {
   box-shadow: 0 0 22px rgba(255,68,85,0.3);
 }
 
+/* フォルダ選択 + ファイル選択 (個別) を 1 カラム内に押し込む。
+   ファイル選択ボタンは「フォルダ非対応端末用の保険」なので幅を絞って
+   フォルダボタンの視認性を保つ。 */
+.folder-files-row {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+.folder-files-row .folder-main-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.folder-files-row .folder-files-fallback {
+  flex: 0 0 auto;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
 /* Full Play / Repeat 1 — 2ボタンを横並びに収める行 */
 .full-repeat-row {
   grid-column: 1 / -1;
@@ -655,8 +675,17 @@ input[type=range]::-moz-range-thumb {
 }
 .kbd-hint { letter-spacing: 1px; opacity: 0.6; }
 
-/* hidden input */
-#folderInput { display: none; }
+/* hidden input — display:none だと一部モバイルブラウザ (Mi Browser 等) で
+   プログラム的 .click() が無反応になる事例があるため、オフスクリーン visually-hidden
+   方式に変更。フォーカスやクリックは生きるが視覚的には完全に隠れる。 */
+#folderInput, #filesInput {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
 
 /* ─── SLEEP TIMER ─── */
 .sleep-row {
@@ -941,7 +970,10 @@ input[type=range]::-moz-range-thumb {
 
   <!-- CONTROLS -->
   <div class="controls">
-    <button class="btn" id="btnFolder">📁 フォルダ選択</button>
+    <div class="folder-files-row">
+      <button class="btn folder-main-btn" id="btnFolder">📁 フォルダ選択</button>
+      <button class="btn folder-files-fallback" id="btnFiles" title="フォルダ選択が動かない端末用 (Miブラウザ等)" aria-label="個別ファイル選択 (フォルダ非対応端末用)">📄</button>
+    </div>
     <button class="btn primary" id="btnPlay" disabled aria-pressed="false" onclick="togglePlay()">▶ PLAY</button>
     <button class="btn" id="btnSkip" disabled onclick="skipTrack()">⏭ スキップ</button>
     <div class="full-repeat-row">
@@ -1029,6 +1061,8 @@ input[type=range]::-moz-range-thumb {
 </div>
 
 <input type="file" id="folderInput" webkitdirectory multiple accept="audio/*">
+<!-- webkitdirectory 非対応ブラウザ (Mi Browser など) 用の素の複数ファイル入力 -->
+<input type="file" id="filesInput" multiple accept="audio/*">
 
 <script>
 // ════════════════════════════════════════════════════════
@@ -1553,11 +1587,23 @@ const idbSet = async (key, val) => {
 //  FILE SELECTION
 // ════════════════════════════════════════════════════════
 
+// モバイル判定。Android Chrome は showDirectoryPicker を実装するが、
+// IndexedDB に永続化した handle の権限復元が不安定 (requestPermission が silently
+// 失敗 / 復元後の values() 走査が空になる等の事例) なため、モバイルでは
+// 自動復元パスをスキップし、再選択ベースに統一する。
+const isMobile = () => /Android|iPhone|iPad|iPod|Mobile|Mi Browser|MiuiBrowser/i.test(navigator.userAgent);
+
 // フォルダボタン: onclick 属性なし、JS で完全管理
 document.getElementById('btnFolder').addEventListener('click', () => selectFolder());
+// ファイル選択ボタン (Mi Browser など webkitdirectory 非対応端末用の保険)
+document.getElementById('btnFiles').addEventListener('click', () => {
+  document.getElementById('filesInput').click();
+});
 
 async function selectFolder() {
-  if (window.showDirectoryPicker) {
+  // モバイルでは showDirectoryPicker を使わず webkitdirectory に統一。
+  // → ① 復元バグ回避  ② Mi Browser など FSA 非搭載でも同じ経路
+  if (!isMobile() && window.showDirectoryPicker) {
     try {
       const handle = await window.showDirectoryPicker({ mode: 'read' });
       await idbSet('folderHandle', handle);
@@ -1565,30 +1611,43 @@ async function selectFolder() {
       await loadFilesFromHandle(handle);
       updateFolderBtn(handle.name);
       hideBanner();
+      return;
     } catch(e) {
-      if (e.name !== 'AbortError') console.warn('Folder picker error:', e);
+      if (e.name === 'AbortError') return;
+      // SecurityError / NotAllowedError 等で開けなかった場合は webkitdirectory にフォールバック
+      console.warn('Folder picker error, falling back to webkitdirectory:', e);
     }
-  } else {
-    document.getElementById('folderInput').click();
   }
+  document.getElementById('folderInput').click();
 }
 
 // fallback: <input webkitdirectory>
-document.getElementById('folderInput').addEventListener('change', function(e) {
-  const exts = /\.(mp3|wav|ogg|flac|aac|m4a|opus|weba|wma)$/i;
-  files = Array.from(e.target.files)
-    .filter(f => exts.test(f.name))
+const AUDIO_EXTS = /\.(mp3|wav|ogg|flac|aac|m4a|opus|weba|wma)$/i;
+
+function ingestPickedFiles(fileList, fallbackLabel) {
+  files = Array.from(fileList)
+    .filter(f => AUDIO_EXTS.test(f.name))
     .sort((a, b) => a.name.localeCompare(b.name, 'ja'));
   renderFileList();
   document.getElementById('fileBadge').textContent = files.length + ' files';
   document.getElementById('btnPlay').disabled = files.length === 0;
   if (isPlaying) stopAll();
-  // フォルダ名をLocalStorageに保存してボタンを更新
-  if (e.target.files.length > 0) {
-    const folderName = e.target.files[0].webkitRelativePath.split('/')[0] || 'フォルダ';
+  if (fileList.length > 0) {
+    // webkitRelativePath はディレクトリ選択時のみ非空。素の複数ファイル選択時は空文字。
+    const rel = fileList[0].webkitRelativePath || '';
+    const folderName = rel.split('/')[0] || fallbackLabel;
     safeLSSet('lastFolderName', folderName);
     updateFolderBtn(folderName);
   }
+}
+
+document.getElementById('folderInput').addEventListener('change', function(e) {
+  ingestPickedFiles(e.target.files, 'フォルダ');
+});
+
+// Mi Browser など webkitdirectory が機能しない端末向けの素の複数ファイル入力。
+document.getElementById('filesInput').addEventListener('change', function(e) {
+  ingestPickedFiles(e.target.files, 'ファイル選択');
 });
 
 async function loadFilesFromHandle(handle) {
@@ -1670,9 +1729,12 @@ async function tryRestoreFolder() {
   const savedName = safeLSGet('lastFolderName');
 
   // ── 対応環境: IndexedDB の handle で自動復元を試みる ──
-  // Android Chrome / iOS Safari / Firefox には showDirectoryPicker が無いので
-  // この経路はスキップされ、後続のフォールバックバナーへ流れる。
-  if (window.showDirectoryPicker) {
+  // モバイルでは showDirectoryPicker 経路を意図的にスキップ:
+  //   Android Chrome は API を実装するものの、リロード後に IDB に保存した
+  //   handle の requestPermission が無反応 / 復元成功扱いでもファイル走査が
+  //   空になる事例が報告されている (= ユーザーから見ると「前回フォルダ復元後にバグる」)。
+  //   再選択ベースのフォールバックバナーに統一して回避する。
+  if (!isMobile() && window.showDirectoryPicker) {
     try {
       const handle = await idbGet('folderHandle');
       if (handle) {
