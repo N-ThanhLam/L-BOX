@@ -15,10 +15,6 @@
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-/* 端末側のノッチ・角丸ディスプレイ・狭幅ビューでも横スクロールが出ないように。
-   .controls の grid 子要素が min-content で右に飛び出した場合の最終防衛線。 */
-html, body { overflow-x: hidden; }
-
 :root {
   --bg:        #000d0f;
   --panel:     #001518;
@@ -257,14 +253,6 @@ body {
   gap: 10px;
   padding: 18px 28px;
   border-bottom: 1px solid var(--amber-lo);
-}
-/* grid 子の min-content（white-space:nowrap + letter-spacing で広がりがち）が
-   1fr 割合を上回って右にはみ出すのを抑制。あふれた分は省略表示にする。
-   ※「📁 フォルダ選択」「⏭ スキップ」など狭幅端末で見切れる主因はこれ。 */
-.controls > .btn {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .btn {
@@ -842,27 +830,15 @@ input[type=range]::-moz-range-thumb {
 
 /* ─── MOBILE ─── */
 @media (max-width: 480px) {
-  /* ヘッダーも safe-area を尊重（ノッチ/角丸ディスプレイで右側 "L-BOX" の "X" が
-     見切れていた問題への対応。letter-spacing が大きいと末尾が画面外に飛び出す） */
-  .header {
-    padding: 16px max(18px, env(safe-area-inset-right)) 14px max(18px, env(safe-area-inset-left));
-  }
+  .header { padding: 16px 18px 14px; }
   .header h1 { font-size: 32px; letter-spacing: 12px; }
-  /* 各セクションの左右 padding に safe-area-inset を反映。
-     旧 16px 固定だと、Android のノッチ/カットアウト・iOS のホームバー横の
-     セーフエリア外に内容が描画されて「右側が画面エッジに張り付く／隠れる」状態だった。 */
   .now-playing, .controls, .settings,
   .status-bar, .history-wrap, .filelist-wrap, .footer {
-    padding-left: max(16px, env(safe-area-inset-left));
-    padding-right: max(16px, env(safe-area-inset-right));
+    padding-left: 16px;
+    padding-right: 16px;
   }
-  .search-wrap {
-    padding-left: max(16px, env(safe-area-inset-left));
-    padding-right: max(16px, env(safe-area-inset-right));
-  }
-  #restoreBanner {
-    padding: 12px max(16px, env(safe-area-inset-right)) 12px max(16px, env(safe-area-inset-left));
-  }
+  .search-wrap { padding-left: 16px; padding-right: 16px; }
+  #restoreBanner { padding: 12px 16px; }
   .setting-label {
     width: 82px;
     font-size: 9px;
@@ -1669,64 +1645,29 @@ function showErrorBanner(message, onRetry) {
 async function tryRestoreFolder() {
   const savedName = safeLSGet('lastFolderName');
 
-  // ── 対応環境: IndexedDB の handle で自動復元を試みる ──
-  // Android Chrome / iOS Safari / Firefox には showDirectoryPicker が無いので
-  // この経路はスキップされ、後続のフォールバックバナーへ流れる。
-  if (window.showDirectoryPicker) {
-    try {
-      const handle = await idbGet('folderHandle');
-      if (handle) {
-        let perm;
-        try { perm = await handle.queryPermission({ mode: 'read' }); }
-        catch(e) { perm = 'prompt'; }
+  if (!window.showDirectoryPicker) return;
+  try {
+    const handle = await idbGet('folderHandle');
+    if (!handle) return;
 
-        if (perm === 'granted') {
-          try {
-            await loadFilesFromHandle(handle);
-            updateFolderBtn(handle.name);
-            hideBanner();
-            return;     // 自動復元成功 → フォールバック不要
-          } catch(e) {
-            showBanner(savedName || handle.name || 'フォルダ', () => restoreWithPermission(handle));
-            return;
-          }
-        } else {
-          // 'prompt' or 'denied' → ワンクリック復元バナー
-          showBanner(savedName || handle.name || 'フォルダ', () => restoreWithPermission(handle));
-          return;
-        }
+    let perm;
+    try { perm = await handle.queryPermission({ mode: 'read' }); }
+    catch(e) { perm = 'prompt'; }
+
+    if (perm === 'granted') {
+      try {
+        await loadFilesFromHandle(handle);
+        updateFolderBtn(handle.name);
+        hideBanner();
+      } catch(e) {
+        showBanner(savedName || handle.name || 'フォルダ', () => restoreWithPermission(handle));
       }
-      // handle が無い場合は下のフォールバックへ流す
-    } catch(e) {
-      console.log('Folder restore error:', e);
+    } else {
+      showBanner(savedName || handle.name || 'フォルダ', () => restoreWithPermission(handle));
     }
+  } catch(e) {
+    console.log('Folder restore error:', e);
   }
-
-  // ── フォールバック: 名前だけ残っている / API 非対応 ──
-  // Android Chrome や iOS Safari など showDirectoryPicker 非対応の環境では
-  // handle 永続化ができないため、せめて「前回のフォルダ名」を表示して
-  // ワンクリックで再選択できるバナーを出す。これが無いと「何も復元されない／
-  // 何のバナーも出ない」状態になり、ユーザーが毎回ゼロから探すハメになる。
-  if (savedName) showFallbackRestoreBanner(savedName);
-}
-
-// showDirectoryPicker 非対応 / handle 紛失時のフォールバックバナー。
-// ボタンを押すと selectFolder() が走り、ピッカー or webkitdirectory フォールバックを呼ぶ。
-function showFallbackRestoreBanner(folderName) {
-  const short = folderName.length > 28 ? folderName.slice(0, 28) + '…' : folderName;
-  document.getElementById('restoreTitle').textContent = '▶ 前回のフォルダ';
-  document.getElementById('restoreInfo').textContent  = `「${short}」 — もう一度選択するとリスト復活`;
-  const banner = document.getElementById('restoreBanner');
-  banner.style.display = 'flex';
-  banner.removeAttribute('role');
-  const oldBtn = document.getElementById('restoreBtn');
-  const newBtn = oldBtn.cloneNode(true);
-  newBtn.textContent = '📁 フォルダを選び直す';
-  oldBtn.parentNode.replaceChild(newBtn, oldBtn);
-  newBtn.addEventListener('click', () => {
-    hideBanner();
-    selectFolder();
-  });
 }
 
 async function restoreWithPermission(handle) {
@@ -1891,9 +1832,6 @@ async function playSpecificTrack(idx) {
   if (_preloadMetaCleanup) { _preloadMetaCleanup(); _preloadMetaCleanup = null; }
   if (_onFullEnded) { audios.forEach(a => a.removeEventListener('ended', _onFullEnded)); _onFullEnded = null; }
   preloadedForIdx = -1;
-  // xfadeTimer は startCrossfade の Web Audio ルートでは setTimeout、
-  // フォールバックでは setInterval で使われるため両方クリアする。
-  clearTimeout(xfadeTimer);
   clearInterval(xfadeTimer);
   clearInterval(tickTimer);
   updateFullBtn();
@@ -2128,29 +2066,6 @@ async function togglePlay() {
 //  PAUSE (一時停止 — タイマー・状態を保持したまま音だけ止める)
 // ════════════════════════════════════════════════════════
 function pauseAll() {
-  // ── クロスフェード中ポーズの整合性確定 ──
-  // クロスフェード中に通知パネル/PLAYボタン経由でポーズすると、wall-clock 駆動の
-  // xfadeTimer はポーズ中も発火し、finishCrossfade が走ってスロット切替と
-  // nextIdx 再抽選が起きる。復帰時に NEXT 表示や残り時間が「ポーズ前と違う」状態
-  // になる整合性崩れにつながるため、ポーズ時点で xfadeTimer をクリアし、
-  // ゲインを「クロスフェード完了形」に確定して finishCrossfade を即時実行する。
-  // これにより resumeAll 時点では「新曲スロットが activeSlot」の確定状態から再生再開できる。
-  if (isFading) {
-    clearTimeout(xfadeTimer);
-    const _outSlot = activeSlot;
-    const _inSlot  = 1 - activeSlot;
-    if (actx && gainA && gainB) {
-      const now = actx.currentTime;
-      const outNode = _outSlot === 0 ? gainA : gainB;
-      const inNode  = _inSlot  === 0 ? gainA : gainB;
-      outNode.gain.cancelScheduledValues(now);
-      outNode.gain.setValueAtTime(0, now);
-      inNode.gain.cancelScheduledValues(now);
-      inNode.gain.setValueAtTime(1, now);
-    }
-    finishCrossfade(_outSlot, _inSlot);
-  }
-
   isPlaying  = false;
   userPaused = true;
   // 音だけ止める（src・タイマー・インデックスは残す）
@@ -2574,30 +2489,15 @@ function toggleFullPlay() {
     updateFullBtn();
 
     // クロスフェード中（isFading だった）にフルを押した場合、
-    // 必ず inSlot（フェードイン側＝これから流れる新曲）を activeSlot に昇格させる。
-    // ユーザーが「フルで聴く」を押す意図は通常「今フェードインしてきた新曲を最後まで」
-    // であり、旧来の resolveActiveSlot ベース（ゲイン比較で主役決定）だと
-    // フェード前半で out 側（旧曲）が主役のままになり「聴きたい曲と違う」UXバグになっていた。
-    // フェード後半（in 側がゲインで勝っているとき）の挙動は従来と同じなので、
-    // 「半分以下なら旧曲、半分以上なら新曲」という曖昧さを排除し、必ず新曲側に統一する。
-    if (isFading) {
-      const newActive = 1 - activeSlot;
-      // 旧 active（フェードアウト中）の曲を即停止＆解放
-      markInternalAudioOp();
-      try { audios[activeSlot].pause(); } catch (_) {}
-      clearSlotSrc(activeSlot);
-      setSlotGain(activeSlot, 0);
-      // インデックスを新主役の曲に揃える（onFullEnded → playTrack(false) が
-      // 再生済み旧曲を currentIdx として使う重複ロードバグを防ぐ）
-      activeSlot = newActive;
+    // ゲインが大きい方を activeSlot に確定して不要なスロットを止める。
+    const preSlot = activeSlot;
+    resolveActiveSlot();
+    // resolveActiveSlot が inSlot を昇格させた場合、currentIdx は旧スロットのまま。
+    // onFullEnded → playTrack(false) が再生済み曲を currentIdx として使い
+    // 同じ曲を再ロードするバグを防ぐため、currentIdx と nextIdx を正しく更新する。
+    if (activeSlot !== preSlot) {
       currentIdx = nextIdx;
       nextIdx    = randIdx(currentIdx);
-      // inSlot がまだ play() 完了途中なら起こす（startCrossfade の play() Promise が
-      // pending のまま toggleFullPlay が呼ばれたケースの保険）
-      const inAudio = audios[activeSlot];
-      if (inAudio.src && inAudio.paused) {
-        inAudio.play().catch(() => {});
-      }
     }
     // フルモードは activeSlot を最終音量 1 で再生するため確実に戻す。
     setSlotGain(activeSlot, 1);
@@ -3149,9 +3049,6 @@ function skipTrack() {
   if (_preloadMetaCleanup) { _preloadMetaCleanup(); _preloadMetaCleanup = null; }
   if (_onFullEnded) { audios.forEach(a => a.removeEventListener('ended', _onFullEnded)); _onFullEnded = null; }
   preloadedForIdx = -1;
-  // xfadeTimer は startCrossfade の Web Audio ルートでは setTimeout、
-  // フォールバックでは setInterval で使われるため両方クリアする。
-  clearTimeout(xfadeTimer);
   clearInterval(xfadeTimer);
   clearInterval(tickTimer);
   updateFullBtn();
