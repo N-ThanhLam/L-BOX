@@ -1609,6 +1609,7 @@ function ingestPickedFiles(fileList, fallbackLabel) {
     const folderName = rel.split('/')[0] || fallbackLabel;
     safeLSSet('lastFolderName', folderName);
     updateFolderBtn(folderName);
+    hideBanner();  // フォルダが確定したら「前回のフォルダ」帯を消す
   }
 }
 
