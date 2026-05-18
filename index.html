@@ -1000,11 +1000,11 @@ input[type=range]::-moz-range-thumb {
     <div class="setting-row sleep-row">
       <div class="setting-label" id="sleepLabel">⏰ スリープ</div>
       <div class="sleep-buttons" id="sleepButtons" role="group" aria-labelledby="sleepLabel">
-        <button type="button" class="sleep-btn active" data-min="0" aria-label="スリープタイマー解除">OFF</button>
-        <button type="button" class="sleep-btn" data-min="15" aria-label="15分後にスリープ">15m</button>
-        <button type="button" class="sleep-btn" data-min="30" aria-label="30分後にスリープ">30m</button>
-        <button type="button" class="sleep-btn" data-min="60" aria-label="60分後にスリープ">60m</button>
-        <button type="button" class="sleep-btn" data-min="90" aria-label="90分後にスリープ">90m</button>
+        <button type="button" class="sleep-btn active" data-min="0" aria-pressed="true" aria-label="スリープタイマー解除">OFF</button>
+        <button type="button" class="sleep-btn" data-min="15" aria-pressed="false" aria-label="15分後にスリープ">15m</button>
+        <button type="button" class="sleep-btn" data-min="30" aria-pressed="false" aria-label="30分後にスリープ">30m</button>
+        <button type="button" class="sleep-btn" data-min="60" aria-pressed="false" aria-label="60分後にスリープ">60m</button>
+        <button type="button" class="sleep-btn" data-min="90" aria-pressed="false" aria-label="90分後にスリープ">90m</button>
       </div>
       <div class="setting-val sleep-val" id="valSleep">—</div>
     </div>
@@ -1030,7 +1030,7 @@ input[type=range]::-moz-range-thumb {
   <!-- FOOTER -->
   <div class="footer">
     <span>RANDOM JUKEBOX</span>
-    <span class="kbd-hint">SPACE=再生 　→=スキップ 　F=フル 　R=リピート 　M=ミュート</span>
+    <span class="kbd-hint">SPACE=再生 　→=スキップ 　F=フル 　R=リピート 　M=ミュート 　/=検索</span>
     <span>HTML5 AUDIO</span>
   </div>
 
@@ -1080,6 +1080,7 @@ let playHistory  = [];         // 再生履歴 (最大5件)
 //   visibilitychange / statechange の自動復帰ロジックはこのフラグを尊重し、
 //   勝手に再開しない。MediaSession 'play' / togglePlay / stopAll でクリア。
 let userPaused = false;
+let _userPauseStart = 0;  // pauseAll でポーズした壁時計時刻（resumeAll で slotEndTime 補正に使う）
 
 // ── 内部 audio.pause() 判別フラグ ──
 // finishCrossfade / resolveActiveSlot 等の内部処理から呼ぶ audio.pause() は
@@ -1870,6 +1871,12 @@ async function playSpecificTrack(idx) {
   // まだ再生していない場合は通常起動
   if (!isPlaying) {
     await resumeAudioContext();  // クリック文脈で確実に resume
+    // 一時停止中（userPaused=true / _userPauseStart>0）からファイルリストクリックで
+    // 直接再生開始するルートは pauseAll を経由しないため、これらが「前の pause」の
+    // 値を保持したままになる。クリアしないと shouldAdvancePlayback() が false を
+    // 返し続け、自動進行が止まる致命バグになる。
+    userPaused      = false;
+    _userPauseStart = 0;
     isPlaying = true;
     activeSlot = 0;
     // stopAll() で element.volume が 0 になっている場合に備えて 1.0 に戻す
@@ -1964,7 +1971,9 @@ function onWobbleChange() {
   const modeLabel = getWobbleMode(raw);
   document.getElementById('wobbleMode').textContent = modeLabel;
   // SR には数値だけでなくモード名も伝える（例: "0 OFF" / "45 ゆらぎ"）
-  slider.setAttribute('aria-valuetext', raw + ' ' + modeLabel.replace(/[—▸\s]/g, ''));
+  // 記号 (— ▸) のみを除去し、ラベル前後の空白は trim でならす。
+  // 旧実装は \s も削除していたため "0OFF" のような連結読み上げになっていた。
+  slider.setAttribute('aria-valuetext', raw + ' ' + modeLabel.replace(/[—▸]/g, '').trim());
 
   if (wobbleIntensity === 0) resetWobbleNodes();
   if (wobbleIntensity > 0 && !wobbleLoopId) startWobbleLoop();
@@ -2158,31 +2167,40 @@ async function togglePlay() {
 //  PAUSE (一時停止 — タイマー・状態を保持したまま音だけ止める)
 // ════════════════════════════════════════════════════════
 function pauseAll() {
-  // ── クロスフェード中ポーズの整合性確定 ──
-  // クロスフェード中に通知パネル/PLAYボタン経由でポーズすると、wall-clock 駆動の
-  // xfadeTimer はポーズ中も発火し、finishCrossfade が走ってスロット切替と
-  // nextIdx 再抽選が起きる。復帰時に NEXT 表示や残り時間が「ポーズ前と違う」状態
-  // になる整合性崩れにつながるため、ポーズ時点で xfadeTimer をクリアし、
-  // ゲインを「クロスフェード完了形」に確定して finishCrossfade を即時実行する。
-  // これにより resumeAll 時点では「新曲スロットが activeSlot」の確定状態から再生再開できる。
+  // ── クロスフェード中ポーズ ──
+  // xfadeTimer をキャンセルしてポーズ中に finishCrossfade が走るのを防ぐ。
+  // Web Audio 環境ではゲインランプをその場の値で凍結し、isFading を true のまま維持する。
+  // resumeAll が残り時間分のランプを再スケジュールすることで、
+  // 「フェードアウト側はそのまま自然に消える / フェードイン側はそのまま音量が上がる」
+  // 動作を一時停止をまたいでも維持できる。
+  // ※ Web Audio 非対応フォールバックのみ旧来どおりフェードを完了形に確定する。
   if (isFading) {
     clearTimeout(xfadeTimer);
-    const _outSlot = activeSlot;
-    const _inSlot  = 1 - activeSlot;
+    clearInterval(xfadeTimer);
     if (actx && gainA && gainB) {
+      // cancelScheduledValues + setValueAtTime で「現在値のまま静止」を確定。
+      // isFading は true のまま → resumeAll で再スケジュール
       const now = actx.currentTime;
-      const outNode = _outSlot === 0 ? gainA : gainB;
-      const inNode  = _inSlot  === 0 ? gainA : gainB;
+      const outNode = activeSlot === 0 ? gainA : gainB;
+      const inNode  = (1 - activeSlot) === 0 ? gainA : gainB;
       outNode.gain.cancelScheduledValues(now);
-      outNode.gain.setValueAtTime(0, now);
+      outNode.gain.setValueAtTime(outNode.gain.value, now);
       inNode.gain.cancelScheduledValues(now);
-      inNode.gain.setValueAtTime(1, now);
+      inNode.gain.setValueAtTime(inNode.gain.value, now);
+      // isFading = true のまま維持（resumeAll が担う）
+    } else {
+      // Web Audio 非対応フォールバック: フェードを完了形に確定
+      const _outSlot = activeSlot;
+      const _inSlot  = 1 - activeSlot;
+      setSlotGain(_outSlot, 0);
+      setSlotGain(_inSlot,  1);
+      finishCrossfade(_outSlot, _inSlot);
     }
-    finishCrossfade(_outSlot, _inSlot);
   }
 
   isPlaying  = false;
   userPaused = true;
+  _userPauseStart = Date.now();  // resumeAll で slotEndTime を補正するために記録
   // 音だけ止める（src・タイマー・インデックスは残す）
   audios.forEach(a => {
     markInternalAudioOp();
@@ -2200,6 +2218,11 @@ function pauseAll() {
   btnPlay.textContent = '▶ PLAY';
   btnPlay.classList.remove('stop-mode');
   btnPlay.setAttribute('aria-pressed', 'false');
+  // ポーズ中はトランスポート操作を無効化して「押せるのに反応しない」状態を防ぐ。
+  // resumeAll で再有効化する。stopAll の disabled とは別経路。
+  document.getElementById('btnSkip').disabled   = true;
+  document.getElementById('btnFull').disabled   = true;
+  document.getElementById('btnRepeat').disabled = true;
   document.getElementById('vinyl').classList.remove('spinning');
   setMediaSessionPlaybackState('paused');
 }
@@ -2209,6 +2232,28 @@ async function resumeAll() {
   if (isPlaying) return;
   userPaused = false;
   isPlaying  = true;
+
+  // ── ポーズ期間分 slotEndTime を後ろへずらす ──
+  // pauseAll は markInternalAudioOp() 経由で audio.pause() するため
+  // onExternalPause が無視され slotEndTime が延長されない。
+  // その結果、再開後の tick で elapsed が大きく / rem が小さく計算され
+  // プログレスバーが先に飛ぶバグをここで修正する。
+  if (_userPauseStart > 0) {
+    const pausedMs = Date.now() - _userPauseStart;
+    _userPauseStart = 0;
+    slotEndTime += pausedMs;
+    // 通常モード（非フェード・非フル・非リピート）は fadeTimer も再スケジュール
+    if (!isFading && !isFullPlay && !isRepeatOne && currentIdx >= 0) {
+      clearTimeout(fadeTimer);
+      const opNow = operationId;
+      const remMs = Math.max(100, slotEndTime - Date.now());
+      fadeTimer = setTimeout(() => {
+        if (opNow !== operationId || !isPlaying || isFading || isFullPlay || isRepeatOne) return;
+        if (!shouldAdvancePlayback()) return;
+        triggerNextSong();
+      }, remMs);
+    }
+  }
   await resumeAudioContext();
   // 両スロットのうち src がある方を再生再開
   audios.forEach(a => {
@@ -2221,6 +2266,10 @@ async function resumeAll() {
   btnPlay.textContent = '⏹ STOP';
   btnPlay.classList.add('stop-mode');
   btnPlay.setAttribute('aria-pressed', 'true');
+  // pauseAll で disabled にしたトランスポート操作を戻す
+  document.getElementById('btnSkip').disabled   = false;
+  document.getElementById('btnFull').disabled   = false;
+  document.getElementById('btnRepeat').disabled = false;
   document.getElementById('vinyl').classList.add('spinning');
   setMediaSessionPlaybackState('playing');
 
@@ -2231,15 +2280,51 @@ async function resumeAll() {
     startFullCountdown();
   } else if (isRepeatOne) {
     startRepeatCountdown();
+  } else if (isFading) {
+    // ── クロスフェード再開 ──
+    // pauseAll でゲインを凍結したまま isFading = true を維持していたので、
+    // ゲインの現在値（＝凍結値）から残りフェード時間を推定してランプを再スケジュールする。
+    // out ゲインは 1→0 の途中: 残り時間 ≈ outGain × fadeDuration
+    if (actx && gainA && gainB) {
+      const outSlot = activeSlot;
+      const inSlot  = 1 - activeSlot;
+      const outNode = outSlot === 0 ? gainA : gainB;
+      const inNode  = inSlot  === 0 ? gainA : gainB;
+      const outGain = outNode.gain.value;
+      const inGain  = inNode.gain.value;
+      const remSec  = Math.max(0.05, outGain * fadeDuration);
+      const now = actx.currentTime;
+      outNode.gain.cancelScheduledValues(now);
+      outNode.gain.setValueAtTime(outGain, now);
+      outNode.gain.linearRampToValueAtTime(0, now + remSec);
+      inNode.gain.cancelScheduledValues(now);
+      inNode.gain.setValueAtTime(inGain, now);
+      inNode.gain.linearRampToValueAtTime(1, now + remSec);
+      const myOp = operationId;
+      xfadeTimer = setTimeout(() => {
+        if (myOp === operationId && isPlaying) finishCrossfade(outSlot, inSlot);
+      }, remSec * 1000);
+    }
+    // pauseAll で tickTimer が停止しているため、ここで再起動する
+    {
+      const totalSec = playDuration + fadeDuration;
+      const slotStartTime = slotEndTime - totalSec * 1000;
+      startCountdown(totalSec, slotEndTime, slotStartTime);
+    }
   } else if (currentIdx >= 0) {
-    const remSec = Math.max(0, (slotEndTime - Date.now()) / 1000);
-    startCountdown(remSec, slotEndTime);
+    // プログレスバーをポーズ前の位置から再開するため、スロット開始時刻を復元する。
+    // resumeAll で startTime = Date.now() にリセットすると elapsed=0 になりバーが
+    // 先頭に戻ってしまうため、anchorStartTime で元の開始位置を明示的に渡す。
+    const totalSec = playDuration + fadeDuration;
+    const slotStartTime = slotEndTime - totalSec * 1000;
+    startCountdown(totalSec, slotEndTime, slotStartTime);
   }
 }
 
 function stopAll() {
   isPlaying   = false;
   isFading    = false;
+  _userPauseStart = 0;
   stopWatchdog();              // ヘルスチェック停止
   isFullPlay  = false;
   isRepeatOne = false;
@@ -2321,7 +2406,9 @@ function stopAll() {
     sleepDisplayTimer = null;
     sleepEndTime = 0;
     document.querySelectorAll('.sleep-btn').forEach(b => {
-      b.classList.toggle('active', +b.dataset.min === 0);
+      const on = +b.dataset.min === 0;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
     const v = document.getElementById('valSleep');
     if (v) v.textContent = '—';
@@ -2626,10 +2713,16 @@ function toggleFullPlay() {
       // 継続して自然に 1 へ向かう。cancelScheduledValues は呼ばない。
       // outSlot が 0 になるタイミング（現在ゲイン値 × fadeDuration）を推定して
       // pause / クリアをスケジュールする。
+      // ★世代ガード★ setTimeout 待機中にユーザーがフル解除 → 新クロスフェード開始
+      // となった場合、oldSlot は新しい inSlot として src がセットされている可能性がある。
+      // 古い setTimeout が世代越しに発火すると新曲を pause + clearSlotSrc してしまう
+      // ため、operationId を控えて世代不一致なら何もしない。
+      const opAtFullScheduling = operationId;
       if (actx && gainA) {
         const outNode = oldSlot === 0 ? gainA : gainB;
         const remainingMs = Math.max(50, outNode.gain.value * fadeDuration * 1000);
         setTimeout(() => {
+          if (opAtFullScheduling !== operationId) return;
           markInternalAudioOp();
           try { audios[oldSlot].pause(); } catch (_) {}
           clearSlotSrc(oldSlot);
@@ -2640,6 +2733,7 @@ function toggleFullPlay() {
         setSlotGain(oldSlot, 0);
         setSlotGain(newActive, 1);
         setTimeout(() => {
+          if (opAtFullScheduling !== operationId) return;
           markInternalAudioOp();
           try { audios[oldSlot].pause(); } catch (_) {}
           clearSlotSrc(oldSlot);
@@ -3250,17 +3344,16 @@ function skipTrack() {
 // ════════════════════════════════════════════════════════
 // anchorEndTime を渡すと slotEndTime をその値で固定し Date.now() を再サンプルしない。
 // toggleFullPlay 解除時など「呼び出し元が既に終了時刻を決定済み」の場合に使う。
-function startCountdown(totalSec, anchorEndTime) {
+function startCountdown(totalSec, anchorEndTime, anchorStartTime) {
   clearInterval(tickTimer);
   slotEndTime = (anchorEndTime !== undefined) ? anchorEndTime : Date.now() + totalSec * 1000;
   // カウント開始時点の終了時刻を固定して pct 計算の基準にする。
   // triggerNextSong が slotEndTime を上書きした後も "今のサイクルの全体幅" を
   // 保持するため、tick クロージャは startTime を独自に持つ。
-  let startTime = Date.now();
-  // 一時停止中に実時間が経過しても elapsed が進まないよう、
-  // ポーズ開始時刻を記録して再開時に startTime を補正する。
-  let pausedAt = null;  // null = 再生中、Date.now() = ポーズ中
-
+  // anchorStartTime が渡された場合（ポーズ後再開時など）はその時刻を起点にする。
+  // これにより elapsed が正しく「スロット開始からの経過秒」を示し、
+  // バーがポーズ前の位置から継続して進む。
+  let startTime = (anchorStartTime !== undefined) ? anchorStartTime : Date.now();
   // ── DOM ref キャッシュ ──
   // 80ms 間隔で getElementById が 5回×12.5Hz/秒 = 62回/秒 呼ばれていたのを
   // クロージャに閉じ込めて一度だけ取得する。tick あたりの DOM lookup は 0 回。
@@ -3278,17 +3371,13 @@ function startCountdown(totalSec, anchorEndTime) {
   let prevFading  = null;     // phase pill の重複書込み抑止
 
   function tick() {
-    if (isFullPlay) { clearInterval(tickTimer); return; }
-    // 一時停止中はバーを更新しない（実時間が経過してもプログレスを進めない）
+    if (isFullPlay) { clearInterval(tickTimer); tickTimer = null; return; }
+    // 一時停止中はタイマーを止めてバーを固定する
+    // resumeAll / visibilitychange が startCountdown を呼び直して再起動する
     if (!isPlaying) {
-      // ポーズ開始時刻を記録（初回のみ）
-      if (pausedAt === null) pausedAt = Date.now();
+      clearInterval(tickTimer);
+      tickTimer = null;
       return;
-    }
-    // 再開直後: ポーズ中に経過した時間を startTime に加算してバーの跳びを防ぐ
-    if (pausedAt !== null) {
-      startTime += Date.now() - pausedAt;
-      pausedAt = null;
     }
     const rem     = Math.max(0, (slotEndTime - Date.now()) / 1000);
     // 経過時間をスロット開始から測り、終了時刻との差分で全体幅を動的に求める。
@@ -3484,8 +3573,12 @@ function setUIIdle() {
     } else if (isRepeatOne) {
       startRepeatCountdown();
     } else {
-      const remSec = Math.max(0, (slotEndTime - Date.now()) / 1000);
-      startCountdown(remSec, slotEndTime);
+      // anchorStartTime を渡さないと startTime=Date.now() でリセットされ
+      // elapsed=0 → pct=0% に巻き戻ってしまう。サイクル開始時刻を
+      // slotEndTime から逆算して渡し、バーが現在位置から継続するようにする。
+      const totalSec      = playDuration + fadeDuration;
+      const slotStartTime = slotEndTime - totalSec * 1000;
+      startCountdown(totalSec, slotEndTime, slotStartTime);
     }
 
     // ユーザーが意図的にポーズした状態なら、自動で鳴らさない
@@ -3658,7 +3751,9 @@ function setSleepTimer(minutes) {
   sleepDisplayTimer = null;
 
   document.querySelectorAll('.sleep-btn').forEach(b => {
-    b.classList.toggle('active', +b.dataset.min === minutes);
+    const on = +b.dataset.min === minutes;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
 
   if (!minutes || minutes <= 0) {
@@ -3686,7 +3781,9 @@ function setSleepTimer(minutes) {
     sleepEndTime = 0;
     if (isPlaying) sleepFadeOut();
     document.querySelectorAll('.sleep-btn').forEach(b => {
-      b.classList.toggle('active', +b.dataset.min === 0);
+      const on = +b.dataset.min === 0;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
     const v = document.getElementById('valSleep');
     if (v) v.textContent = '—';
