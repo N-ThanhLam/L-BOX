@@ -1239,12 +1239,28 @@ function shouldAdvancePlayback() {
 //  おきには発火する）ため、最終防衛線として機能する。
 // ════════════════════════════════════════════════════════
 let watchdogTimer = null;
+// 可視時は 5s で素早く異常検出、非表示時は 15s に伸ばして
+// バックグラウンド時の CPU ウェイクアップ頻度を 1/3 に削減する。
+// ロック画面/別タブで長時間流すケースのバッテリ消費を抑えるのが目的。
+// 復旧ラグは最悪 15s 程度に伸びるが、Web Audio スケジューリングと
+// visibilitychange / Page Lifecycle 'resume' 側で大半のケースは即時復帰する。
+const WATCHDOG_INTERVAL_VISIBLE = 5000;
+const WATCHDOG_INTERVAL_HIDDEN  = 15000;
 function startWatchdog() {
   if (watchdogTimer) return;
-  watchdogTimer = setInterval(checkPlaybackHealth, 5000);
+  const ms = document.hidden ? WATCHDOG_INTERVAL_HIDDEN : WATCHDOG_INTERVAL_VISIBLE;
+  watchdogTimer = setInterval(checkPlaybackHealth, ms);
 }
 function stopWatchdog() {
   if (watchdogTimer) { clearInterval(watchdogTimer); watchdogTimer = null; }
+}
+// 可視状態が変わったタイミングで間隔を貼り直す。
+// 再生中でなければ何もしない（startWatchdog 自体が呼ばれていない）。
+function applyWatchdogVisibilityRate() {
+  if (!watchdogTimer) return;
+  clearInterval(watchdogTimer);
+  const ms = document.hidden ? WATCHDOG_INTERVAL_HIDDEN : WATCHDOG_INTERVAL_VISIBLE;
+  watchdogTimer = setInterval(checkPlaybackHealth, ms);
 }
 function checkPlaybackHealth() {
   if (!isPlaying || userPaused) return;
@@ -3551,10 +3567,12 @@ function setUIIdle() {
       // ── 画面が隠れた: UI 更新タイマーを止めて電力を節約 ──
       // クロスフェードと fadeTimer は wall-clock 駆動なので止めなくて良い。
       // tickTimer・vinyl アニメ・wobble・スリープ表示は全停止。
+      // watchdog は止めずに頻度だけ下げる（最終防衛線の役割を残す）。
       clearInterval(tickTimer);
       if (vinyl) vinyl.style.animationPlayState = 'paused';
       applyWobbleVisibilityRate();
       applySleepDisplayVisibility();
+      applyWatchdogVisibilityRate();
       // 停滞検出用の現在位置をスナップショット
       _lastTime[0] = audios[0].currentTime || 0;
       _lastTime[1] = audios[1].currentTime || 0;
@@ -3565,6 +3583,7 @@ function setUIIdle() {
     if (vinyl) vinyl.style.animationPlayState = '';
     applyWobbleVisibilityRate();
     applySleepDisplayVisibility();
+    applyWatchdogVisibilityRate();
 
     if (!isPlaying) return;
 
