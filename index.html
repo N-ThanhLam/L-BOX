@@ -332,26 +332,6 @@ body {
   box-shadow: 0 0 22px rgba(255,68,85,0.3);
 }
 
-/* フォルダ選択 + ファイル選択 (個別) を 1 カラム内に押し込む。
-   ファイル選択ボタンは「フォルダ非対応端末用の保険」なので幅を絞って
-   フォルダボタンの視認性を保つ。 */
-.folder-files-row {
-  display: flex;
-  gap: 6px;
-  min-width: 0;
-}
-.folder-files-row .folder-main-btn {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.folder-files-row .folder-files-fallback {
-  flex: 0 0 auto;
-  padding-left: 10px;
-  padding-right: 10px;
-}
-
 /* Full Play / Repeat 1 — 2ボタンを横並びに収める行 */
 .full-repeat-row {
   grid-column: 1 / -1;
@@ -675,10 +655,9 @@ input[type=range]::-moz-range-thumb {
 }
 .kbd-hint { letter-spacing: 1px; opacity: 0.6; }
 
-/* hidden input — display:none だと一部モバイルブラウザ (Mi Browser 等) で
-   プログラム的 .click() が無反応になる事例があるため、オフスクリーン visually-hidden
-   方式に変更。フォーカスやクリックは生きるが視覚的には完全に隠れる。 */
-#folderInput, #filesInput {
+/* hidden input — display:none だと一部モバイルブラウザでプログラム的 .click() が
+   無反応になる事例があるため、オフスクリーン visually-hidden 方式。 */
+#folderInput {
   position: absolute;
   left: -9999px;
   width: 1px;
@@ -970,10 +949,7 @@ input[type=range]::-moz-range-thumb {
 
   <!-- CONTROLS -->
   <div class="controls">
-    <div class="folder-files-row">
-      <button class="btn folder-main-btn" id="btnFolder">📁 フォルダ選択</button>
-      <button class="btn folder-files-fallback" id="btnFiles" title="フォルダ選択が動かない端末用 (Miブラウザ等)" aria-label="個別ファイル選択 (フォルダ非対応端末用)">📄</button>
-    </div>
+    <button class="btn" id="btnFolder">📁 フォルダ選択</button>
     <button class="btn primary" id="btnPlay" disabled aria-pressed="false" onclick="togglePlay()">▶ PLAY</button>
     <button class="btn" id="btnSkip" disabled onclick="skipTrack()">⏭ スキップ</button>
     <div class="full-repeat-row">
@@ -1061,8 +1037,6 @@ input[type=range]::-moz-range-thumb {
 </div>
 
 <input type="file" id="folderInput" webkitdirectory multiple accept="audio/*">
-<!-- webkitdirectory 非対応ブラウザ (Mi Browser など) 用の素の複数ファイル入力 -->
-<input type="file" id="filesInput" multiple accept="audio/*">
 
 <script>
 // ════════════════════════════════════════════════════════
@@ -1595,10 +1569,6 @@ const isMobile = () => /Android|iPhone|iPad|iPod|Mobile|Mi Browser|MiuiBrowser/i
 
 // フォルダボタン: onclick 属性なし、JS で完全管理
 document.getElementById('btnFolder').addEventListener('click', () => selectFolder());
-// ファイル選択ボタン (Mi Browser など webkitdirectory 非対応端末用の保険)
-document.getElementById('btnFiles').addEventListener('click', () => {
-  document.getElementById('filesInput').click();
-});
 
 async function selectFolder() {
   // モバイルでは showDirectoryPicker を使わず webkitdirectory に統一。
@@ -1643,11 +1613,6 @@ function ingestPickedFiles(fileList, fallbackLabel) {
 
 document.getElementById('folderInput').addEventListener('change', function(e) {
   ingestPickedFiles(e.target.files, 'フォルダ');
-});
-
-// Mi Browser など webkitdirectory が機能しない端末向けの素の複数ファイル入力。
-document.getElementById('filesInput').addEventListener('change', function(e) {
-  ingestPickedFiles(e.target.files, 'ファイル選択');
 });
 
 async function loadFilesFromHandle(handle) {
@@ -2627,6 +2592,10 @@ function toggleFullPlay() {
       audios.forEach(a => { a.loop = false; });
       updateRepeatBtn();
     }
+    // isFading の値を先に保存する。
+    // 以降で isFading = false をセットしてしまうと if(isFading) が永遠に false になり、
+    // クロスフェード中分岐に入れないバグが発生するため、ここで退避しておく。
+    const wasFading = isFading;
     isFullPlay = true;
     isFading   = false;
     operationId++;               // 古い onMeta / fadeTimer 等を無効化
@@ -2638,37 +2607,70 @@ function toggleFullPlay() {
     clearInterval(tickTimer);
     updateFullBtn();
 
-    // クロスフェード中（isFading だった）にフルを押した場合、
-    // 必ず inSlot（フェードイン側＝これから流れる新曲）を activeSlot に昇格させる。
-    // ユーザーが「フルで聴く」を押す意図は通常「今フェードインしてきた新曲を最後まで」
-    // であり、旧来の resolveActiveSlot ベース（ゲイン比較で主役決定）だと
-    // フェード前半で out 側（旧曲）が主役のままになり「聴きたい曲と違う」UXバグになっていた。
-    // フェード後半（in 側がゲインで勝っているとき）の挙動は従来と同じなので、
-    // 「半分以下なら旧曲、半分以上なら新曲」という曖昧さを排除し、必ず新曲側に統一する。
-    if (isFading) {
+    // クロスフェード中（wasFading = true）にフルを押した場合、
+    // inSlot（フェードイン側＝これから流れる新曲）を activeSlot に昇格させる。
+    // ユーザーの意図は「フェードアウト中の曲はそのまま自然に消え、
+    // フェードイン中の曲もそのままの音量でフルに移行する」なので、
+    // Web Audio のゲインランプはキャンセルせずそのまま継続させる。
+    if (wasFading) {
+      const oldSlot   = activeSlot;
       const newActive = 1 - activeSlot;
-      // 旧 active（フェードアウト中）の曲を即停止＆解放
-      markInternalAudioOp();
-      try { audios[activeSlot].pause(); } catch (_) {}
-      clearSlotSrc(activeSlot);
-      setSlotGain(activeSlot, 0);
       // インデックスを新主役の曲に揃える（onFullEnded → playTrack(false) が
       // 再生済み旧曲を currentIdx として使う重複ロードバグを防ぐ）
       activeSlot = newActive;
       currentIdx = nextIdx;
       nextIdx    = randIdx(currentIdx);
+      // ── ゲインランプはそのまま継続 ──
+      // フェードアウト側 (oldSlot) の linearRampToValueAtTime(0, ...) は引き続き進み、
+      // 自然に 0 へ向かう。フェードイン側 (newActive) の linearRampToValueAtTime(1, ...) も
+      // 継続して自然に 1 へ向かう。cancelScheduledValues は呼ばない。
+      // outSlot が 0 になるタイミング（現在ゲイン値 × fadeDuration）を推定して
+      // pause / クリアをスケジュールする。
+      if (actx && gainA) {
+        const outNode = oldSlot === 0 ? gainA : gainB;
+        const remainingMs = Math.max(50, outNode.gain.value * fadeDuration * 1000);
+        setTimeout(() => {
+          markInternalAudioOp();
+          try { audios[oldSlot].pause(); } catch (_) {}
+          clearSlotSrc(oldSlot);
+          setSlotGain(oldSlot, 0);
+        }, remainingMs + 100);
+      } else {
+        // Web Audio 非対応フォールバック: 手動ゲインは即時切替
+        setSlotGain(oldSlot, 0);
+        setSlotGain(newActive, 1);
+        setTimeout(() => {
+          markInternalAudioOp();
+          try { audios[oldSlot].pause(); } catch (_) {}
+          clearSlotSrc(oldSlot);
+        }, 50);
+      }
       // inSlot がまだ play() 完了途中なら起こす（startCrossfade の play() Promise が
       // pending のまま toggleFullPlay が呼ばれたケースの保険）
       const inAudio = audios[activeSlot];
       if (inAudio.src && inAudio.paused) {
         inAudio.play().catch(() => {});
       }
+    } else {
+      // 非フェード中は activeSlot を最終音量 1 で確実に。
+      setSlotGain(activeSlot, 1);
     }
-    // フルモードは activeSlot を最終音量 1 で再生するため確実に戻す。
-    setSlotGain(activeSlot, 1);
 
     const audio = audios[activeSlot];
     const myOp  = operationId;
+
+    // ★初回 playTrack のロード中に fullplay を押された場合の保険★
+    // operationId++ で playTrack の onMeta が無効化されるため、放置すると
+    // audio.play() が誰からも呼ばれず「FULL PLAY 表示だが永久無音」になる。
+    // ここで明示的に play() を呼んで救済する。メタデータ未着でもブラウザが
+    // 内部キューイングして metadata 取得後に自動再生開始してくれる。
+    // ※ isFading 分岐内では既に inAudio.play() を呼んでいるので二重呼び出しは無害。
+    if (audio.src && audio.paused) {
+      audio.play().catch(err => {
+        console.warn('Full play start: audio.play() failed:', err);
+        if (actx && actx.state === 'suspended') actx.resume().catch(() => {});
+      });
+    }
 
     // 前回フルモードのリスナーが残っていれば先に除去してから登録する。
     if (_onFullEnded) {
