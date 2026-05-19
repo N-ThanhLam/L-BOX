@@ -1863,7 +1863,8 @@ function applySearchFilter() {
       li.style.display = '';
       visible++;
     } else {
-      const name = files[i] ? stripExt(files[i].name).toLowerCase() : '';
+      const fileIdx = li.id.startsWith('fi-') ? +li.id.slice(3) : -1;
+      const name = fileIdx >= 0 && files[fileIdx] ? stripExt(files[fileIdx].name).toLowerCase() : '';
       const match = name.includes(q);
       li.style.display = match ? '' : 'none';
       if (match) visible++;
@@ -2476,8 +2477,8 @@ function startRepeatCountdown() {
 
   tickTimer = setInterval(() => {
     if (!isRepeatOne) { clearInterval(tickTimer); return; }
-    // 一時停止中はバーを更新しない
-    if (!isPlaying) return;
+    // 一時停止中はタイマーを止めてバーを固定する（resumeAll が startRepeatCountdown を呼び直す）
+    if (!isPlaying) { clearInterval(tickTimer); tickTimer = null; return; }
     const total = isFinite(audio.duration) ? audio.duration : 1;
     const pct   = total > 0 ? (audio.currentTime / total) * 100 : 0;
     progressFill.style.width = pct + '%';
@@ -2838,8 +2839,8 @@ function startFullCountdown() {
 
   tickTimer = setInterval(() => {
     if (!isFullPlay) { clearInterval(tickTimer); return; }
-    // 一時停止中はバーを更新しない
-    if (!isPlaying) return;
+    // 一時停止中はタイマーを止めてバーを固定する（resumeAll が startFullCountdown を呼び直す）
+    if (!isPlaying) { clearInterval(tickTimer); tickTimer = null; return; }
     const rem   = isFinite(audio.duration) ? Math.max(0, audio.duration - audio.currentTime) : 0;
     const total = isFinite(audio.duration) ? audio.duration : 1;
     const pct   = total > 0 ? ((total - rem) / total) * 100 : 0;
