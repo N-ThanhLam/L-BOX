@@ -506,6 +506,9 @@ input[type=range] {
   border-radius: 2px;
   outline: none;
   cursor: pointer;
+  /* スマホで横スライド中の縦ブレを「ページスクロール」と誤解釈させないため、
+     縦パンだけブラウザに渡し、横ジェスチャは要素自身に占有させる */
+  touch-action: pan-y;
 }
 input[type=range]::-webkit-slider-thumb {
   -webkit-appearance: none;
@@ -1075,6 +1078,26 @@ let _onFullEnded = null;
 
 let playHistory  = [];         // 再生履歴 (最大5件)
 
+// 直近に再生した曲インデックスの履歴（先頭が最新）。
+// randIdx でこのリストに含まれる曲を選択候補から外し、
+// 小さなフォルダでの「同じ曲が短期間に繰り返される」現象を抑える。
+// 上限はフォルダサイズの半分まで動的にクランプして詰まりを避ける。
+let _recentIdxList = [];
+const _RECENT_IDX_MAX = 5;
+
+function pushRecentIdx(idx) {
+  if (idx < 0 || idx >= files.length) return;
+  if (_recentIdxList[0] === idx) return;
+  _recentIdxList.unshift(idx);
+  // 上限を超えたら古いものから捨てる
+  const cap = Math.max(1, Math.min(_RECENT_IDX_MAX, Math.floor(files.length / 2)));
+  while (_recentIdxList.length > cap) _recentIdxList.pop();
+}
+
+function resetRecentIdxList() {
+  _recentIdxList = [];
+}
+
 // ── 外部割り込み / ロック画面操作 ──
 // userPaused: 通知パネルのポーズボタン等で「ユーザーが意図して止めた」場合に true。
 //   visibilitychange / statechange の自動復帰ロジックはこのフラグを尊重し、
@@ -1099,6 +1122,31 @@ function markInternalAudioOp() {
   setTimeout(() => { _internalAudioOp = Math.max(0, _internalAudioOp - 1); }, 100);
 }
 
+// ── 連続ロードエラー安全装置 ──
+// すべて破損 / 非対応の音源ばかりが入ったフォルダで、エラーから次曲スキップが
+// 暴走的に繰り返されるとブラウザがフリーズする。一定回数連続で失敗したら
+// 強制停止して原因をユーザーへ可視化する。
+let _consecutiveLoadErrors = 0;
+const MAX_CONSECUTIVE_LOAD_ERRORS = 5;
+
+// 戻り値: true なら呼び出し元は即 return（停止処理に入る）。
+function noteLoadError() {
+  _consecutiveLoadErrors++;
+  if (_consecutiveLoadErrors >= MAX_CONSECUTIVE_LOAD_ERRORS) {
+    _consecutiveLoadErrors = 0;
+    try { stopAll(); } catch(_) {}
+    try {
+      showErrorBanner(
+        '再生不可能なファイルが連続しました。フォルダの内容をご確認ください。',
+        selectFolder
+      );
+    } catch(_) {}
+    return true;
+  }
+  return false;
+}
+function noteLoadSuccess() { _consecutiveLoadErrors = 0; }
+
 // ── 次曲プリロード ──
 let preloadTimer        = null;    // 次曲を先行ロードするタイマー
 let preloadedForIdx     = -1;      // プリロード完了済みの nextIdx（-1=未プリロード）
@@ -1120,6 +1168,8 @@ let _wow = 0, _wowV = 0;
 let _breathPh = [0, Math.PI * 0.73];
 let _panPh    = [0, Math.PI * 1.37];
 let _filtPh   = 0;
+let _wobbleTickCount = 0;
+let _lastPlaybackRate = [1, 1];   // 直近書込み値（ε比較で無駄書込みを抑止）
 
 // ── 拡張子を除いた表示名 ──
 function stripExt(filename) {
@@ -1265,6 +1315,29 @@ function applyWatchdogVisibilityRate() {
 function checkPlaybackHealth() {
   if (!isPlaying || userPaused) return;
 
+  // ── スリープタイマーの保険チェック ──
+  // バックグラウンドの省電力モードで setTimeout が大幅に遅延すると、
+  // setSleepTimer 内の最終 setTimeout が予定時刻に発火せず再生が延々続く。
+  // wall-clock の sleepEndTime と比較して期限超過なら手動でフェードアウトする。
+  if (typeof sleepEndTime !== 'undefined' && sleepEndTime > 0 && Date.now() >= sleepEndTime) {
+    sleepEndTime = 0;
+    try { clearTimeout(sleepTimerId);      } catch(_) {}
+    try { clearInterval(sleepDisplayTimer);} catch(_) {}
+    sleepTimerId      = null;
+    sleepDisplayTimer = null;
+    try {
+      document.querySelectorAll('.sleep-btn').forEach(b => {
+        const on = +b.dataset.min === 0;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+      const v = document.getElementById('valSleep');
+      if (v) v.textContent = '—';
+    } catch(_) {}
+    try { sleepFadeOut(); } catch(_) {}
+    return;
+  }
+
   const a = audios[activeSlot];
 
   // リピート1: audio.loop=true が進行を担うので、停止していれば軽くキックするだけ
@@ -1363,14 +1436,44 @@ function clearSlotSrc(slot) {
   try { audios[slot].src = ''; } catch(_) {}
 }
 
+/**
+ * フォルダ切替時の保険：再生していない（pause 中など stopAll が呼ばれない）状態で
+ * 古いスロットの ObjectURL が残ったままだと、フォルダを何度も切り替えるたびに
+ * メモリリークが蓄積する。明示的に両スロットを解放する。
+ */
+function releaseSlotsForFolderChange() {
+  audios.forEach((a, i) => {
+    markInternalAudioOp();
+    try { a.pause(); } catch (_) {}
+    clearSlotSrc(i);
+  });
+  currentIdx = -1;
+  nextIdx    = -1;
+}
+
 // ════════════════════════════════════════════════════════
 //  WEB AUDIO API
 // ════════════════════════════════════════════════════════
 let actx       = null;
-let analyser   = null;
 let gainA      = null;
 let gainB      = null;
 let masterGain = null;
+
+// ── Equal-power クロスフェード用カーブ ──
+// 線形クロスフェードでは中間点で両ゲインが 0.5+0.5=1.0 でも、人間の耳には
+// 実効音圧 (RMS) が ~-3dB 低下したように聞こえて「音量の谷」が発生する。
+// sin/cos の四分円カーブを使うと中間点で 0.707+0.707 となり実効音圧が一定に保たれる。
+// 一度だけ生成して全クロスフェードで共有する。
+const _EQ_POWER_N = 256;
+const _eqPowerOutCurve = new Float32Array(_EQ_POWER_N);  // cos: 1 → 0
+const _eqPowerInCurve  = new Float32Array(_EQ_POWER_N);  // sin: 0 → 1
+(function buildEqPowerCurves() {
+  for (let i = 0; i < _EQ_POWER_N; i++) {
+    const t = i / (_EQ_POWER_N - 1);
+    _eqPowerOutCurve[i] = Math.cos(t * Math.PI * 0.5);
+    _eqPowerInCurve[i]  = Math.sin(t * Math.PI * 0.5);
+  }
+})();
 
 function initAudioContext() {
   // 生成のみ行う。resume は resumeAudioContext() に完全に委ねる。
@@ -1408,8 +1511,6 @@ function initAudioContext() {
 
     gainA = actx.createGain(); gainA.gain.value = 1;
     gainB = actx.createGain(); gainB.gain.value = 0;
-
-    analyser = actx.createAnalyser();
 
     masterGain = actx.createGain();
     masterGain.gain.value = masterVolume;
@@ -1452,9 +1553,9 @@ function initAudioContext() {
     } catch(e) { console.warn('Noise gen failed:', e); }
 
     // ── グラフ接続 ──
-    srcA.connect(gainA); gainA.connect(breathGainA); breathGainA.connect(lofiFilterA); lofiFilterA.connect(wobblePannerA); wobblePannerA.connect(analyser);
-    srcB.connect(gainB); gainB.connect(breathGainB); breathGainB.connect(lofiFilterB); lofiFilterB.connect(wobblePannerB); wobblePannerB.connect(analyser);
-    analyser.connect(masterGain);
+    // 旧実装は analyser ノードを挟んでいたが波形を読む処理が無く、CPU 浪費の原因だった。
+    srcA.connect(gainA); gainA.connect(breathGainA); breathGainA.connect(lofiFilterA); lofiFilterA.connect(wobblePannerA); wobblePannerA.connect(masterGain);
+    srcB.connect(gainB); gainB.connect(breathGainB); breathGainB.connect(lofiFilterB); lofiFilterB.connect(wobblePannerB); wobblePannerB.connect(masterGain);
     masterGain.connect(actx.destination);
   } catch(e) {
     console.warn('AudioContext unavailable:', e);
@@ -1533,7 +1634,15 @@ function setSlotGain(slot, value) {
 
 function applyMasterVolume() {
   if (actx && masterGain) {
-    masterGain.gain.value = masterVolume;
+    // ★重要★ setTargetAtTime で 15ms かけて滑らかに移行する。
+    // 旧実装は gain.value 直書きで瞬時にジャンプしていたため、波形の振幅がゼロ以外の
+    // タイミングで音量変更すると「プチッ」というクリックノイズが発生していた。
+    // 進行中のオートメーション（クロスフェード等）は cancelScheduledValues で
+    // 取り消した上で現在値から目標値へ遷移させる。
+    const now = actx.currentTime;
+    masterGain.gain.cancelScheduledValues(now);
+    masterGain.gain.setValueAtTime(masterGain.gain.value, now);
+    masterGain.gain.setTargetAtTime(masterVolume, now, 0.015);
   } else {
     // fallback: re-apply to both slots
     const slotVols = [gainA ? gainA.gain.value : (activeSlot === 0 ? 1 : 0),
@@ -1619,6 +1728,8 @@ function ingestPickedFiles(fileList, fallbackLabel) {
   document.getElementById('fileBadge').textContent = files.length + ' files';
   document.getElementById('btnPlay').disabled = files.length === 0;
   if (isPlaying) stopAll();
+  else releaseSlotsForFolderChange();
+  resetRecentIdxList();
   if (fileList.length > 0) {
     // webkitRelativePath はディレクトリ選択時のみ非空。素の複数ファイル選択時は空文字。
     const rel = fileList[0].webkitRelativePath || '';
@@ -1642,6 +1753,9 @@ async function loadFilesFromHandle(handle) {
   async function walk(dirHandle, depth) {
     if (depth > 8) return;
     for await (const entry of dirHandle.values()) {
+      // OS が自動生成する隠しフォルダ／ファイル（.Trashes / .Spotlight-V100 / .DS_Store など）を
+      // 走査前に丸ごとスキップ。中身が数千〜数万エントリある場合があり、読み込み遅延の主因になる。
+      if (entry.name && entry.name.charCodeAt(0) === 46 /* '.' */) continue;
       if (entry.kind === 'file' && exts.test(entry.name)) {
         try { arr.push(await entry.getFile()); }
         catch (_) { /* 読めないファイルはスキップ */ }
@@ -1659,6 +1773,8 @@ async function loadFilesFromHandle(handle) {
   document.getElementById('fileBadge').textContent = files.length + ' files';
   document.getElementById('btnPlay').disabled = files.length === 0;
   if (isPlaying) stopAll();
+  else releaseSlotsForFolderChange();
+  resetRecentIdxList();
 }
 
 function updateFolderBtn(name) {
@@ -2003,6 +2119,8 @@ function onWobbleChange() {
 
 function resetWobbleNodes() {
   audios.forEach(a => { try { a.playbackRate = 1; } catch(_) {} });
+  _lastPlaybackRate[0] = 1;
+  _lastPlaybackRate[1] = 1;
   const t = actx ? actx.currentTime : 0;
   if (breathGainA)  breathGainA.gain.setTargetAtTime(1, t, 0.3);
   if (breathGainB)  breathGainB.gain.setTargetAtTime(1, t, 0.3);
@@ -2013,11 +2131,22 @@ function resetWobbleNodes() {
   if (noiseGainNode) noiseGainNode.gain.setTargetAtTime(0, t, 0.3);
 }
 
+// 端末の「視差効果を減らす」設定を尊重する。
+// CSS 側ではビニル回転やバナーの脈動を停止しているが、揺らぎエンジンによる
+// ピッチ・パン・呼吸感の揺れも一部のユーザーに乗り物酔いに似た不快感を引き起こすため、
+// 同じフラグでオフにする。
+function prefersReducedMotion() {
+  try { return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+  catch(_) { return false; }
+}
+
 function startWobbleLoop() {
   if (wobbleLoopId) return;
   // 不可視時に起動要求が来た場合は省電力のため起動しない。
   // 可視へ戻ったタイミングで applyWobbleVisibilityRate() が再起動する。
   if (document.hidden) return;
+  // 視差効果軽減を要求しているユーザーには揺らぎを発生させない（聴覚酔い対策）
+  if (prefersReducedMotion()) { resetWobbleNodes(); return; }
   wobbleLoopId = setInterval(wobbleTick, 65);
 }
 
@@ -2040,7 +2169,20 @@ function wobbleTick() {
                  + Math.sin(now * 0.067) * 0.0015
                  + (Math.random() - 0.5) * 0.001) * w;
   const rate = Math.max(0.92, Math.min(1.08, 1 + _wow + flutter));
-  audios.forEach(a => { try { if (!a.paused) a.playbackRate = rate; } catch(_) {} });
+  // playbackRate は HTMLMediaElement への直接書込みのため、65ms 間隔の連続更新が
+  // 端末によってはリサンプリング処理に追いつかず「プツプツ」というノイズの原因になる。
+  // 対策: ① 2 ティックに 1 回（~130ms 間隔）に間引く  ② 直前値との差が 0.0008 未満なら書込みを省略
+  _wobbleTickCount++;
+  if ((_wobbleTickCount & 1) === 0) {
+    audios.forEach((a, i) => {
+      try {
+        if (!a.paused && Math.abs(rate - _lastPlaybackRate[i]) > 0.0008) {
+          a.playbackRate = rate;
+          _lastPlaybackRate[i] = rate;
+        }
+      } catch(_) {}
+    });
+  }
 
   // ── 呼吸感（Breathing gain）──
   // ゆったりした周期でやさしく波打つ。不快にならない下限を自動設定。
@@ -2141,12 +2283,28 @@ function randIdx(exclude = -1) {
   const len = files.length;
   if (len === 0) return -1;          // ファイルなし（呼び元で防ぐが念のため）
   if (len === 1) return 0;           // 1曲しかないので exclude を無視して返す
-  if (exclude < 0 || exclude >= len) // exclude が無効値なら単純ランダム
-    return Math.floor(Math.random() * len);
 
-  // exclude を避けて選ぶ：候補配列から直接ランダム選択（ループ試行なし）
-  const idx = Math.floor(Math.random() * (len - 1));
-  return idx < exclude ? idx : idx + 1;
+  // 除外集合: exclude（直前再生曲）＋ _recentIdxList（直近数曲）
+  // _RECENT_IDX_MAX = 5 だが pushRecentIdx 側で files.length/2 まで自動クランプされる。
+  const excludeSet = new Set();
+  if (exclude >= 0 && exclude < len) excludeSet.add(exclude);
+  for (let i = 0; i < _recentIdxList.length; i++) {
+    const r = _recentIdxList[i];
+    if (r >= 0 && r < len) excludeSet.add(r);
+  }
+  // 全曲除外されてしまう保険（ファイル数 ≤ 除外集合の場合）：
+  // exclude のみに縮退する。それでも詰まるなら無条件ランダム。
+  if (excludeSet.size >= len) {
+    excludeSet.clear();
+    if (exclude >= 0 && exclude < len) excludeSet.add(exclude);
+    if (excludeSet.size >= len) return Math.floor(Math.random() * len);
+  }
+  // 候補から一様に選ぶ。除外比率は最大 ~50% なので試行 2 回程度で終わる。
+  let candidate;
+  do {
+    candidate = Math.floor(Math.random() * len);
+  } while (excludeSet.has(candidate));
+  return candidate;
 }
 
 // ════════════════════════════════════════════════════════
@@ -2405,6 +2563,7 @@ function stopAll() {
   }
 
   currentIdx = nextIdx = -1;
+  resetRecentIdxList();   // 次セッションを最初からシャッフル可能にする
 
   const btnPlay = document.getElementById('btnPlay');
   btnPlay.textContent = '▶ PLAY';
@@ -2547,6 +2706,7 @@ function playRepeatOneTrack(idx) {
 
     audio.play().then(() => {
       if (myOp !== operationId || !isPlaying || !isRepeatOne) return;
+      noteLoadSuccess();
       document.getElementById('vinyl').classList.add('spinning');
       setUIPlaying(file.name, true);   // 履歴追加 & MediaSession 反映
       setUIRepeatOne();                 // ステータスを REPEAT 1 で上書き
@@ -2567,6 +2727,7 @@ function playRepeatOneTrack(idx) {
     audio.removeEventListener('error',          onErr);
     if (myOp !== operationId || !isPlaying) return;
     console.warn('Repeat load error, trying another:', file?.name, e);
+    if (noteLoadError()) return;          // 上限超過 → stopAll 済み
     setTimeout(() => {
       if (myOp === operationId && isPlaying && isRepeatOne) {
         playRepeatOneTrack(randIdx(currentIdx));
@@ -2878,6 +3039,9 @@ function playTrack(first = false) {
     _onFullEnded = null;
   }
 
+  // 旧曲を直近履歴へ。playTrack は仕切り直し経路で呼ばれることも多いため、
+  // first=true（再生開始）は前回履歴を引きずらないように push をスキップ。
+  if (!first && currentIdx >= 0) pushRecentIdx(currentIdx);
   currentIdx = first ? randIdx() : (nextIdx >= 0 ? nextIdx : randIdx());
   nextIdx    = randIdx(currentIdx);
 
@@ -2900,6 +3064,14 @@ function playTrack(first = false) {
 
     const dur   = audio.duration;
     const total = playDuration + fadeDuration;
+    // 極端に短いファイル（< 3 秒）はクロスフェード／タイマーの整合が取れず、
+    // 無音期間や暴走の原因になるためスキップする。連続エラー扱いで安全装置にも算入。
+    if (isFinite(dur) && dur < 3) {
+      console.warn('Track too short, skipping:', file?.name, 'duration=', dur);
+      if (noteLoadError()) return;          // 上限超過 → stopAll 済み
+      setTimeout(() => { if (myOp === operationId && isPlaying) playTrack(false); }, 100);
+      return;
+    }
     if (isFinite(dur) && dur > total + 2) {
       audio.currentTime = Math.random() * (dur - total - 1);
     } else if (isFinite(dur) && dur > 4) {
@@ -2913,6 +3085,7 @@ function playTrack(first = false) {
 
     audio.play().then(() => {
       if (myOp !== operationId || !isPlaying) return; // play()完了時に再チェック
+      noteLoadSuccess();                  // 連続エラーカウンタをリセット
       document.getElementById('vinyl').classList.add('spinning');
       setUIPlaying(file.name, true);
 
@@ -2990,6 +3163,7 @@ function playTrack(first = false) {
     audio.removeEventListener('ended',          onEnded);
     if (myOp !== operationId || !isPlaying) return;
     console.warn('Audio load error, skipping track:', file?.name, e);
+    if (noteLoadError()) return;          // 上限超過 → stopAll 済み
     setTimeout(() => { if (myOp === operationId && isPlaying) playTrack(false); }, 300);
   }
 
@@ -3157,31 +3331,51 @@ function startCrossfade(alreadyBumped = false) {
         // Web Audio のオーディオスレッド側でランプを実行する。
         // バックグラウンド時に main スレッド setInterval がスロットルされても
         // ゲイン遷移は AudioContext 時間軸で正確に進むのでクロスフェードが途切れない。
+        // ★Equal-power カーブを使うことで中間点の音量へこみ (-3dB) を解消。
         const now = actx.currentTime;
         const outNode = outSlot === 0 ? gainA : gainB;
         const inNode  = inSlot  === 0 ? gainA : gainB;
 
         outNode.gain.cancelScheduledValues(now);
-        outNode.gain.setValueAtTime(startOutGain, now);
-        outNode.gain.linearRampToValueAtTime(0, now + fadeDuration);
+        // startOutGain（中断→再開ケースでは < 1 になる）でスケールする
+        let scaledOut;
+        if (startOutGain >= 0.999) {
+          scaledOut = _eqPowerOutCurve;          // 共有カーブをそのまま使う
+        } else {
+          scaledOut = new Float32Array(_EQ_POWER_N);
+          for (let i = 0; i < _EQ_POWER_N; i++) scaledOut[i] = _eqPowerOutCurve[i] * startOutGain;
+        }
+        try {
+          outNode.gain.setValueCurveAtTime(scaledOut, now, fadeDuration);
+        } catch(_) {
+          // 一部環境で setValueCurveAtTime が失敗した場合の線形ランプフォールバック
+          outNode.gain.setValueAtTime(startOutGain, now);
+          outNode.gain.linearRampToValueAtTime(0, now + fadeDuration);
+        }
 
         inNode.gain.cancelScheduledValues(now);
-        inNode.gain.setValueAtTime(0, now);
-        inNode.gain.linearRampToValueAtTime(1, now + fadeDuration);
+        try {
+          inNode.gain.setValueCurveAtTime(_eqPowerInCurve, now, fadeDuration);
+        } catch(_) {
+          inNode.gain.setValueAtTime(0, now);
+          inNode.gain.linearRampToValueAtTime(1, now + fadeDuration);
+        }
 
         xfadeTimer = setTimeout(() => {
           if (myOp === operationId && isPlaying) finishCrossfade(outSlot, inSlot);
         }, fadeDuration * 1000);
       } else {
-        // Web Audio 未対応環境: 旧来の setInterval ランプ
+        // Web Audio 未対応環境: 旧来の setInterval ランプ。
+        // こちらも equal-power カーブで「音量の谷」を回避する。
         const totalSteps = fadeDuration * 20;
         let step = 0;
         xfadeTimer = setInterval(() => {
           if (myOp !== operationId || !isPlaying) { clearInterval(xfadeTimer); return; }
           step++;
           const t = Math.min(step / totalSteps, 1);
-          setSlotGain(outSlot, startOutGain * (1 - t));
-          setSlotGain(inSlot,  t);
+          const ang = t * Math.PI * 0.5;
+          setSlotGain(outSlot, startOutGain * Math.cos(ang));
+          setSlotGain(inSlot,  Math.sin(ang));
 
           if (t >= 1) {
             clearInterval(xfadeTimer);
@@ -3215,6 +3409,7 @@ function startCrossfade(alreadyBumped = false) {
     if (myOp !== operationId || !isPlaying) return;
     console.warn('Next audio load error, skipping to next:', inFile?.name, e);
     isFading = false;
+    if (noteLoadError()) return;          // 上限超過 → stopAll 済み
     // nextIdx を更新してから playTrack で仕切り直す
     nextIdx = randIdx(currentIdx);
     setTimeout(() => { if (myOp === operationId && isPlaying) playTrack(false); }, 300);
@@ -3263,6 +3458,8 @@ function finishCrossfade(outSlot, inSlot) {
   if (inSlot !== undefined) activeSlot = inSlot;
   setSlotGain(activeSlot, 1);
 
+  // 旧曲（再生し終えたばかりの currentIdx）を直近履歴に積み、次回以降の randIdx で避ける。
+  pushRecentIdx(currentIdx);
   currentIdx = nextIdx;
   nextIdx    = randIdx(currentIdx);
 
@@ -3526,11 +3723,29 @@ function setUIIdle() {
     if (document.hidden) {
       // 不可視中: ループ完全停止
       if (wobbleLoopId) { clearInterval(wobbleLoopId); wobbleLoopId = null; }
-    } else if (wobbleIntensity > 0 && !wobbleLoopId) {
-      // 可視復帰: wobble 有効なら再起動
+    } else if (wobbleIntensity > 0 && !wobbleLoopId && !prefersReducedMotion()) {
+      // 可視復帰: wobble 有効 かつ 視差効果軽減を要求していなければ再起動
       wobbleLoopId = setInterval(wobbleTick, WOBBLE_INTERVAL_VISIBLE);
     }
   }
+
+  // ── 視差効果軽減フラグの動的変更を監視 ──
+  // OS 側で設定を切り替えたタイミングで揺らぎを即時 ON/OFF できるようにする。
+  try {
+    const mq = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (mq) {
+      const onMQ = () => {
+        if (mq.matches) {
+          if (wobbleLoopId) { clearInterval(wobbleLoopId); wobbleLoopId = null; }
+          resetWobbleNodes();
+        } else if (wobbleIntensity > 0 && isPlaying && !document.hidden && !wobbleLoopId) {
+          wobbleLoopId = setInterval(wobbleTick, WOBBLE_INTERVAL_VISIBLE);
+        }
+      };
+      if (mq.addEventListener) mq.addEventListener('change', onMQ);
+      else if (mq.addListener) mq.addListener(onMQ);   // Safari 旧版
+    }
+  } catch(_) {}
 
   // ── スリープタイマー表示の可視/不可視制御 ──
   // 不可視中は valSleep の DOM 更新が無意味なので 1Hz タイマーを停止する。
@@ -3995,6 +4210,17 @@ if ('serviceWorker' in navigator &&
       });
     })
     .catch(err => console.warn('[L-BOX] SW registration failed:', err));
+
+  // ── controllerchange: 新 SW が制御権を握ったタイミングで画面を再読み込み ──
+  // skipWaiting しただけでは キャッシュ／JS／HTML の世代が噛み合わず不整合になり得る。
+  // ただし再生中に強制リロードすると音が止まるため、その場合は次回起動まで保留する。
+  let _swReloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (_swReloaded) return;
+    if (typeof isPlaying !== 'undefined' && isPlaying) return;   // 再生中は次回まで保留
+    _swReloaded = true;
+    try { window.location.reload(); } catch(_) {}
+  });
 }
 </script>
 </body>
