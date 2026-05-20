@@ -1115,19 +1115,13 @@ let fallbackGainA = 1, fallbackGainB = 0;
 let playHistory  = [];         // 再生履歴 (最大5件)
 
 // 直近に再生した曲インデックスの履歴（先頭が最新）。
-// randIdx でこのリストに含まれる曲を選択候補から外し、
-// 小さなフォルダでの「同じ曲が短期間に繰り返される」現象を抑える。
-// 上限はフォルダサイズの半分まで動的にクランプして詰まりを避ける。
+// サイズ管理は randIdx 側で行う（フォルダ規模で動的に決定）。
 let _recentIdxList = [];
-const _RECENT_IDX_MAX = 5;
 
 function pushRecentIdx(idx) {
   if (idx < 0 || idx >= files.length) return;
   if (_recentIdxList[0] === idx) return;
   _recentIdxList.unshift(idx);
-  // 上限を超えたら古いものから捨てる
-  const cap = Math.max(1, Math.min(_RECENT_IDX_MAX, Math.floor(files.length / 2)));
-  while (_recentIdxList.length > cap) _recentIdxList.pop();
 }
 
 function resetRecentIdxList() {
@@ -2392,32 +2386,53 @@ function renderHistory() {
 // ════════════════════════════════════════════════════════
 //  RANDOM HELPERS
 // ════════════════════════════════════════════════════════
-function randIdx(exclude = -1) {
-  const len = files.length;
-  if (len === 0) return -1;          // ファイルなし（呼び元で防ぐが念のため）
-  if (len === 1) return 0;           // 1曲しかないので exclude を無視して返す
+// ランダム選曲（10曲以下は残り2曲キープ / 11曲以上は80%除外）
+// 引数 excludeIdx（現曲）は履歴未登録でも一時的に除外する。
+function randIdx(excludeIdx = -1) {
+  if (files.length === 0) return -1;
+  if (files.length === 1) return 0;
 
-  // 除外集合: exclude（直前再生曲）＋ _recentIdxList（直近数曲）
-  // _RECENT_IDX_MAX = 5 だが pushRecentIdx 側で files.length/2 まで自動クランプされる。
-  const excludeSet = new Set();
-  if (exclude >= 0 && exclude < len) excludeSet.add(exclude);
-  for (let i = 0; i < _recentIdxList.length; i++) {
-    const r = _recentIdxList[i];
-    if (r >= 0 && r < len) excludeSet.add(r);
+  let maxRecentCount;
+  if (files.length <= 10) {
+    maxRecentCount = files.length - 2;
+  } else {
+    maxRecentCount = Math.floor(files.length * 0.8);
   }
-  // 全曲除外されてしまう保険（ファイル数 ≤ 除外集合の場合）：
-  // exclude のみに縮退する。それでも詰まるなら無条件ランダム。
-  if (excludeSet.size >= len) {
-    excludeSet.clear();
-    if (exclude >= 0 && exclude < len) excludeSet.add(exclude);
-    if (excludeSet.size >= len) return Math.floor(Math.random() * len);
+
+  // pushRecentIdx は unshift（先頭=最新）なので、あふれは末尾=最古から捨てる。
+  while (_recentIdxList.length > maxRecentCount) {
+    _recentIdxList.pop();
   }
-  // 候補から一様に選ぶ。除外比率は最大 ~50% なので試行 2 回程度で終わる。
-  let candidate;
-  do {
-    candidate = Math.floor(Math.random() * len);
-  } while (excludeSet.has(candidate));
-  return candidate;
+
+  const recentSet = new Set(_recentIdxList);
+  if (excludeIdx !== -1) {
+    recentSet.add(excludeIdx);
+  }
+
+  const pool = [];
+  for (let i = 0; i < files.length; i++) {
+    if (!recentSet.has(i)) {
+      pool.push(i);
+    }
+  }
+
+  // プールが空になった場合（2曲フォルダで現曲+履歴1件など）：
+  // 引数の除外を諦め、履歴ベースで再抽選する。
+  if (pool.length === 0) {
+    const fallbackSet = new Set(_recentIdxList);
+    const fallbackPool = [];
+    for (let i = 0; i < files.length; i++) {
+      if (!fallbackSet.has(i)) {
+        fallbackPool.push(i);
+      }
+    }
+    return fallbackPool.length > 0
+      ? fallbackPool[Math.floor(Math.random() * fallbackPool.length)]
+      : Math.floor(Math.random() * files.length);
+  }
+
+  const r = Math.floor(Math.random() * pool.length);
+  return pool[r];
 }
 
 // ════════════════════════════════════════════════════════
