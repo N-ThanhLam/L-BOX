@@ -1144,12 +1144,14 @@ let _userPauseStart = 0;  // pauseAll でポーズした壁時計時刻（resume
 // この値が >0 の間に発火した pause/play イベントは内部由来とみなして無視する。
 // HTML spec 上 'pause' は "queue a media element task" でディスパッチされる可能性が
 // あるため、queueMicrotask ではなく setTimeout で次タスク以降まで保持する。
-// 100ms 窓内に発生する外部 pause は確率的に無視されるが実害ない（電話着信等が
-// クロスフェード完了の 100ms 以内に発生するレース条件は非現実的）。
+// 300ms 窓内に発生する外部 pause は確率的に無視されるが実害ない（電話着信等が
+// クロスフェード完了の 300ms 以内に発生するレース条件は非現実的）。
+// ※ 100ms では高負荷環境や iOS のタスクキュー遅延で窓を超えて pause/play イベントが
+//    届くことがあり、pauseStartMs が誤って立って slotEndTime がずれ続けるバグの原因になる。
 let _internalAudioOp = 0;
 function markInternalAudioOp() {
   _internalAudioOp++;
-  setTimeout(() => { _internalAudioOp = Math.max(0, _internalAudioOp - 1); }, 100);
+  setTimeout(() => { _internalAudioOp = Math.max(0, _internalAudioOp - 1); }, 300);
 }
 
 // ── 連続ロードエラー安全装置 ──
@@ -3238,6 +3240,9 @@ function playTrack(first = false) {
     // 効くように、ピッチ補正は明示的に切る）。
     disablePitchPreservation(audio);
 
+    // 新曲開始の play() は内部操作。発火する 'play' イベントが
+    // onExternalPlay に「外部中断からの復帰」と誤検知されないようガードする。
+    markInternalAudioOp();
     audio.play().then(() => {
       if (myOp !== operationId || !isPlaying) return; // play()完了時に再チェック
       noteLoadSuccess();                  // 連続エラーカウンタをリセット
@@ -3473,6 +3478,9 @@ function startCrossfade(alreadyBumped = false) {
     // audio.load() 後にブラウザが preservesPitch をリセットする可能性に備えて再適用
     disablePitchPreservation(inAudio);
 
+    // クロスフェード開始の play() は内部操作。発火する 'play' イベントが
+    // onExternalPlay に「外部中断からの復帰」と誤検知されないようガードする。
+    markInternalAudioOp();
     inAudio.play().then(() => {
       if (myOp !== operationId || !isPlaying || isFullPlay) return; // play()完了時に再チェック
       setUIFading();
@@ -4066,6 +4074,18 @@ function setUIIdle() {
   function onExternalPlay() {
     // 一時停止期間ぶん slotEndTime を遅らせて fadeTimer を再スケジュール
     if (pauseStartMs > 0 && isPlaying) {
+      // クロスフェード中に inAudio.play() が発火する 'play' イベントを
+      // 外部中断からの復帰と誤判定しないようガードする。
+      // isFading=true の間は startCrossfade が内部で play() を呼んでおり、
+      // pauseStartMs が立っていても slotEndTime を補正してはいけない。
+      // （補正すると毎クロスフェードで slotEndTime が後ろへずれ続け、
+      //   フェードが音の自然終了と乖離する「フェードが物理と切れる」バグになる）
+      if (isFading) {
+        pauseStartMs = 0;  // クリアだけして補正はしない
+        wasPlayingBeforeInterrupt = false;
+        return;
+      }
+
       const pausedMs = Date.now() - pauseStartMs;
       pauseStartMs = 0;
       slotEndTime += pausedMs;
